@@ -1,0 +1,47 @@
+{
+  "personal": {
+    "sex": "",
+    "dob": "YYYY-MM-DD",
+    "menopause_status": ""
+  },
+  "conditions": {
+    "primary": "",
+    "other": [],
+    "ruled_out": [],
+    "procedures": []
+  },
+  "lifestyle": {
+    "salt_intake": "",
+    "weight": "",
+    "activity": "",
+    "stress": "",
+    "sleep": ""
+  },
+  "medication_history": {
+    "previous_medications": ""
+  },
+  "clinical_context": {
+    "notes": ""
+  },
+  "dietary": {
+    "known_triggers": {
+      "severe": [],
+      "general": [],
+      "experimenting": []
+    },
+    "safe_foods": [],
+    "preferences": {
+      "cooking_fat": "",
+      "style": "",
+      "avoids": ""
+    },
+    "history": {
+      "notes": ""
+    }
+  },
+  "family_history": {
+    "cancer": "",
+    "other": ""
+  },
+  "upcoming_appointments": {}
+}

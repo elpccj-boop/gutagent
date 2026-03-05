@@ -1,0 +1,10 @@
+data/gutagent.db
+data/profile.json
+reports/
+utils/import_history.py
+utils/import_labs.py
+.env
+__pycache__/
+*.pyc
+.DS_Store
+.idea/

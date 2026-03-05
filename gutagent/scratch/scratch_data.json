@@ -1,0 +1,7 @@
+[
+    {"name": "chicken", "safe": true, "category": "protein"},
+    {"name": "garlic", "safe": false, "category": "vegetable"},
+    {"name": "rice", "safe": true, "category": "grain"},
+    {"name": "onion", "safe": false, "category": "vegetable"},
+    {"name": "spinach", "safe": true, "category": "vegetable"}
+]

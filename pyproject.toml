@@ -1,0 +1,30 @@
+[project]
+name = "gutagent"
+version = "0.1.0"
+description = "Personalized dietary AI agent for IBD management"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.40.0",
+    "rich>=13.0",
+    "prompt-toolkit>=3.0",
+]
+
+[project.optional-dependencies]
+rag = [
+    "chromadb>=0.4",
+    "sentence-transformers>=2.0",
+]
+nutrition = [
+    "requests>=2.31",
+]
+web = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.3",
+]
+
+[project.scripts]
+gutagent = "gutagent.main:main"
