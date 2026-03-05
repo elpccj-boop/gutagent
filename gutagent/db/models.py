@@ -7,6 +7,16 @@ from datetime import datetime, timedelta
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "gutagent.db")
 
+
+def validate_timestamp(occurred_at: str | None) -> str:
+    """Validate and return a timestamp string. Raises ValueError for invalid dates."""
+    if occurred_at is None:
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # This will raise ValueError for impossible dates like Feb 29 in non-leap years
+    datetime.fromisoformat(occurred_at)
+    return occurred_at
+
+
 def get_connection():
     """Get a database connection, creating the DB if needed."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -127,8 +137,8 @@ def delete_entry(table: str, entry_id: int) -> dict:
 def log_meal(meal_type: str | None, description: str, foods: list[str],
              notes: str | None = None, occurred_at: str | None = None) -> dict:
     """Log a meal entry."""
+    timestamp = validate_timestamp(occurred_at)
     conn = get_connection()
-    timestamp = occurred_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor = conn.execute(
         "INSERT INTO meals (meal_type, description, foods, notes, occurred_at) VALUES (?, ?, ?, ?, ?)",
         (meal_type, description, json.dumps(foods), notes, timestamp)
@@ -163,8 +173,8 @@ def search_meals_by_food(food: str) -> list[dict]:
 def log_symptom(symptom: str, severity: int, timing: str | None = None,
                 notes: str | None = None, occurred_at: str | None = None) -> dict:
     """Log a symptom entry."""
+    timestamp = validate_timestamp(occurred_at)
     conn = get_connection()
-    timestamp = occurred_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor = conn.execute(
         "INSERT INTO symptoms (symptom, severity, timing, notes, occurred_at) VALUES (?, ?, ?, ?, ?)",
         (symptom, severity, timing, notes, timestamp)
@@ -200,8 +210,8 @@ def log_medication_event(medication: str, event_type: str,
                          occurred_at: str | None = None, dose: str | None = None,
                          notes: str | None = None) -> dict:
     """Log a medication change."""
+    timestamp = validate_timestamp(occurred_at)
     conn = get_connection()
-    timestamp = occurred_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor = conn.execute(
         "INSERT INTO medication_events (medication, event_type, occurred_at, dose, notes) VALUES (?, ?, ?, ?, ?)",
         (medication, event_type, timestamp, dose, notes)
@@ -228,8 +238,8 @@ def log_vital(vital_type: str, occurred_at: str | None = None,
               heart_rate: int | None = None, value: float | None = None,
               unit: str | None = None, notes: str | None = None) -> dict:
     """Log a vital sign reading."""
+    timestamp = validate_timestamp(occurred_at)
     conn = get_connection()
-    timestamp = occurred_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor = conn.execute(
         """INSERT INTO vitals
            (vital_type, systolic, diastolic, heart_rate, value, unit, occurred_at, notes)

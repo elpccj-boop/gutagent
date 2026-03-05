@@ -86,16 +86,27 @@ def build_styles():
 
 
 def build_table(data, col_widths=None):
-    """Build a formatted table from list of lists."""
+    """Build a formatted table from list of lists, wrapping text in Paragraphs."""
     if not data:
         return None
-    style = TableStyle([
+
+    header_style = ParagraphStyle(
+        'TableHeader', fontName='Helvetica-Bold', fontSize=9,
+        textColor=HexColor('#1a5276'), leading=11,
+    )
+    cell_style = ParagraphStyle(
+        'TableCell', fontName='Helvetica', fontSize=8,
+        leading=10,
+    )
+
+    # Wrap every cell in a Paragraph so text wraps within column widths
+    wrapped = []
+    for row_idx, row in enumerate(data):
+        style = header_style if row_idx == 0 else cell_style
+        wrapped.append([Paragraph(str(cell), style) for cell in row])
+
+    table_style = TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), HexColor('#d4e6f1')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), HexColor('#1a5276')),
-        ('FONTSIZE', (0, 0), (-1, 0), 9),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 1), (-1, -1), 8),
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
@@ -105,8 +116,8 @@ def build_table(data, col_widths=None):
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ('RIGHTPADDING', (0, 0), (-1, -1), 6),
     ])
-    t = Table(data, colWidths=col_widths, repeatRows=1)
-    t.setStyle(style)
+    t = Table(wrapped, colWidths=col_widths, repeatRows=1)
+    t.setStyle(table_style)
     return t
 
 
@@ -213,7 +224,7 @@ def generate_report(days_back=30, output_path=None):
                 str(r['systolic']) if r['systolic'] else '—',
                 str(r['diastolic']) if r['diastolic'] else '—',
                 str(r['heart_rate']) if r['heart_rate'] else '—',
-                (r['notes'] or '—')[:60]
+                r['notes'] or '—'
             ])
         story.append(build_table(bp_data, col_widths=[1.5*inch, 0.8*inch, 0.8*inch, 0.6*inch, 2.8*inch]))
 
@@ -276,7 +287,7 @@ def generate_report(days_back=30, output_path=None):
                 val,
                 lab['reference_range'] or '—',
                 status + flag,
-                (lab['notes'] or '—')[:60]
+                lab['notes'] or '—'
             ])
 
         if lab_data and len(lab_data) > 1:
@@ -298,7 +309,7 @@ def generate_report(days_back=30, output_path=None):
             meal_data.append([
                 m['occurred_at'][:16] if m['occurred_at'] else '—',
                 m['meal_type'] or '—',
-                (m['description'] or '—')[:50], ', '.join(foods)[:50]
+                m['description'] or '—', ', '.join(foods)
             ])
         story.append(build_table(meal_data, col_widths=[1.3*inch, 0.8*inch, 2.2*inch, 2.2*inch]))
     else:
@@ -319,7 +330,7 @@ def generate_report(days_back=30, output_path=None):
                 s['occurred_at'][:16] if s['occurred_at'] else '—',
                 s['symptom'] or '—',
                 str(s['severity']) if s['severity'] else '—',
-                (s['notes'] or '—')[:60]
+                s['notes'] or '—'
             ])
         story.append(build_table(sx_data, col_widths=[1.3*inch, 1.2*inch, 0.7*inch, 3.3*inch]))
     else:

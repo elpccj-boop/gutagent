@@ -300,6 +300,51 @@ class TestFilters:
         assert "gluten" not in foods_found
 
 
+class TestDateValidation:
+    def test_invalid_date_feb_29_non_leap_year(self):
+        """Feb 29 in a non-leap year should be rejected."""
+        with pytest.raises(ValueError):
+            models.log_symptom("fatigue", 5, occurred_at="2026-02-29 14:00:00")
+
+    def test_invalid_date_feb_30(self):
+        """Feb 30 never exists."""
+        with pytest.raises(ValueError):
+            models.log_meal("lunch", "test", ["rice"], occurred_at="2026-02-30 12:00:00")
+
+    def test_invalid_date_month_13(self):
+        with pytest.raises(ValueError):
+            models.log_vital("weight", occurred_at="2026-13-01 10:00:00", value=70, unit="kg")
+
+    def test_invalid_date_rejected_for_medication(self):
+        with pytest.raises(ValueError):
+            models.log_medication_event("Aspirin", "started", occurred_at="2026-04-31 08:00:00")
+
+    def test_valid_date_accepted(self):
+        result = models.log_symptom("bloating", 5, occurred_at="2026-03-01 14:00:00")
+        assert result["status"] == "logged"
+        assert result["when"] == "2026-03-01 14:00:00"
+
+    def test_feb_29_leap_year_accepted(self):
+        result = models.log_meal("lunch", "rice", ["rice"], occurred_at="2028-02-29 12:00:00")
+        assert result["status"] == "logged"
+
+    def test_none_defaults_to_now(self):
+        result = models.log_symptom("nausea", 3, occurred_at=None)
+        assert result["status"] == "logged"
+        # Should be a valid parseable timestamp close to now
+        logged_time = datetime.fromisoformat(result["when"])
+        assert abs((datetime.now() - logged_time).total_seconds()) < 5
+
+    def test_invalid_date_does_not_insert(self):
+        """An invalid date should not leave a row in the database."""
+        with pytest.raises(ValueError):
+            models.log_symptom("fatigue", 5, occurred_at="2026-02-29 14:00:00")
+        conn = models.get_connection()
+        count = conn.execute("SELECT COUNT(*) FROM symptoms").fetchone()[0]
+        conn.close()
+        assert count == 0
+
+
 class TestOutputStructure:
     def test_result_fields(self):
         """Verify all expected fields are present in correlation results."""
