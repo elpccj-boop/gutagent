@@ -21,7 +21,7 @@ try:
 except ImportError:
     HAS_RICH = False
 
-def print_welcome():
+def print_welcome_long():
     if HAS_RICH:
         console.print(Panel(
   "[bold green]GutAgent[/bold green] — Your Personalized Dietary Assistant\n\n"
@@ -72,7 +72,7 @@ def print_welcome():
         print("  Type '--verbose' to toggle tool visibility.")
         print("=" * 60 + "\n")
 
-def print_welcome_old():
+def print_welcome():
     if HAS_RICH:
         console.print(Panel(
             "[bold green]GutAgent[/bold green] — Your Personalized Dietary Assistant\n\n"

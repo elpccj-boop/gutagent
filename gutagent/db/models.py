@@ -46,19 +46,6 @@ def init_db():
             timing TEXT,
             notes TEXT
         );
-
-        CREATE TABLE IF NOT EXISTS correlations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            food TEXT NOT NULL,
-            symptom TEXT NOT NULL,
-            occurrences INTEGER DEFAULT 1,
-            avg_severity REAL,
-            avg_hours_after REAL,
-            confidence TEXT DEFAULT 'low',
-            first_seen TIMESTAMP,
-            last_seen TIMESTAMP,
-            notes TEXT
-        );
             
         CREATE TABLE IF NOT EXISTS medication_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,13 +81,40 @@ def init_db():
             notes TEXT,
             logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+            
+        CREATE TABLE IF NOT EXISTS sleep (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hours REAL,
+            quality TEXT,
+            occurred_at TIMESTAMP,
+            logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            notes TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS exercise (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            activity TEXT NOT NULL,
+            duration_minutes INTEGER,
+            occurred_at TIMESTAMP,
+            logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            notes TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS journal (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            description TEXT NOT NULL,
+            occurred_at TIMESTAMP,
+            logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
     """)
     conn.commit()
     conn.close()
 
-def update_entry(table: str, entry_id: int, updates: dict) -> dict:
-    """Update fields on an existing entry."""
-    allowed_tables = {"meals", "symptoms", "vitals", "medication_events"}
+# --- Edit log operations ---
+
+def update_log(table: str, entry_id: int, updates: dict) -> dict:
+    """Update fields on an existing log entry."""
+    allowed_tables = {"meals", "symptoms", "vitals", "medication_events", "sleep", "exercise", "journal"}
     if table not in allowed_tables:
         return {"error": f"Cannot update table: {table}"}
 
@@ -120,9 +134,9 @@ def update_entry(table: str, entry_id: int, updates: dict) -> dict:
     conn.close()
     return {"status": "updated", "table": table, "id": entry_id, "changes": updates}
 
-def delete_entry(table: str, entry_id: int) -> dict:
-    """Delete an entry by id."""
-    allowed_tables = {"meals", "symptoms", "vitals", "medication_events"}
+def delete_log(table: str, entry_id: int) -> dict:
+    """Delete a log entry by id."""
+    allowed_tables = {"meals", "symptoms", "vitals", "medication_events", "journal"}
     if table not in allowed_tables:
         return {"error": f"Cannot delete from table: {table}"}
 
@@ -289,197 +303,97 @@ def get_recent_labs(test_date: str | None = None) -> list:
     conn.close()
     return [dict(r) for r in rows]
 
-# --- Pattern analysis ---
+# --- Sleep operations ---
 
-def analyze_food_symptom_patterns(
-    days_back: int = 30,
-    symptom_focus: str | None = None,
-    food_focus: str | None = None
-) -> dict:
-    """
-    Analyze correlations between meals and symptoms.
-    Looks for symptoms that occur within 0.5-8 hours of eating specific foods.
-
-    Tracks both positive evidence (food followed by symptom) and negative evidence
-    (food eaten with no symptom) to compute a symptom rate. Also detects foods that
-    always co-occur so the user knows when triggers can't be isolated.
-    """
-    from bisect import bisect_left, bisect_right
-    from collections import Counter
-
+def log_sleep(hours: float | None = None, quality: str | None = None,
+              occurred_at: str | None = None, notes: str | None = None) -> dict:
+    """Log a sleep entry."""
+    timestamp = validate_timestamp(occurred_at)
     conn = get_connection()
-    cutoff = (datetime.now() - timedelta(days=days_back)).isoformat()
-
-    meals = conn.execute(
-        "SELECT * FROM meals WHERE occurred_at >= ? ORDER BY occurred_at", (cutoff,)
-    ).fetchall()
-
-    symptoms_query = "SELECT * FROM symptoms WHERE occurred_at >= ?"
-    params = [cutoff]
-    if symptom_focus:
-        symptoms_query += " AND symptom LIKE ?"
-        params.append(f"%{symptom_focus}%")
-
-    symptom_rows = conn.execute(
-        symptoms_query + " ORDER BY occurred_at", params
-    ).fetchall()
+    cursor = conn.execute(
+        "INSERT INTO sleep (hours, quality, occurred_at, notes) VALUES (?, ?, ?, ?)",
+        (hours, quality, timestamp, notes)
+    )
+    conn.commit()
+    entry_id = cursor.lastrowid
     conn.close()
+    result = {"id": entry_id, "status": "logged", "when": timestamp}
+    if hours:
+        result["hours"] = hours
+    if quality:
+        result["quality"] = quality
+    return result
 
-    if not meals or not symptom_rows:
-        return {
-            "status": "insufficient_data",
-            "meals_count": len(meals),
-            "symptoms_count": len(symptom_rows),
-            "message": "Need more logged meals and symptoms to find patterns. Keep logging!"
-        }
+def get_recent_sleep(days_back: int = 7) -> list[dict]:
+    """Get sleep entries from the last N days."""
+    conn = get_connection()
+    if days_back > 0:
+        cutoff = (datetime.now() - timedelta(days=days_back)).isoformat()
+        rows = conn.execute(
+            "SELECT * FROM sleep WHERE occurred_at >= ? ORDER BY occurred_at DESC", (cutoff,)
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM sleep ORDER BY occurred_at DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
-    # Parse meal data: times, per-meal food lists, and total food frequency
-    meal_times = []
-    meal_foods = []
-    food_total_count = Counter()  # how many meals contain each food
-    food_co_occurs = {}  # food -> Counter of other foods eaten in the same meal
+# --- Exercise operations ---
 
-    for meal in meals:
-        mt = datetime.fromisoformat(meal["occurred_at"])
-        foods = json.loads(meal["foods"]) if meal["foods"] else []
-        if food_focus:
-            foods = [f for f in foods if food_focus.lower() in f.lower()]
-        foods_lower = [f.lower() for f in foods]
+def log_exercise(activity: str, duration_minutes: int | None = None,
+                 occurred_at: str | None = None, notes: str | None = None) -> dict:
+    """Log an exercise entry."""
+    timestamp = validate_timestamp(occurred_at)
+    conn = get_connection()
+    cursor = conn.execute(
+        "INSERT INTO exercise (activity, duration_minutes, occurred_at, notes) VALUES (?, ?, ?, ?)",
+        (activity, duration_minutes, timestamp, notes)
+    )
+    conn.commit()
+    entry_id = cursor.lastrowid
+    conn.close()
+    result = {"id": entry_id, "status": "logged", "activity": activity, "when": timestamp}
+    if duration_minutes:
+        result["duration_minutes"] = duration_minutes
+    return result
 
-        meal_times.append(mt)
-        meal_foods.append(foods)
+def get_recent_exercise(days_back: int = 7) -> list[dict]:
+    """Get exercise entries from the last N days."""
+    conn = get_connection()
+    if days_back > 0:
+        cutoff = (datetime.now() - timedelta(days=days_back)).isoformat()
+        rows = conn.execute(
+            "SELECT * FROM exercise WHERE occurred_at >= ? ORDER BY occurred_at DESC", (cutoff,)
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM exercise ORDER BY occurred_at DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
-        for fl in foods_lower:
-            food_total_count[fl] += 1
-            if fl not in food_co_occurs:
-                food_co_occurs[fl] = Counter()
-            for other in foods_lower:
-                if other != fl:
-                    food_co_occurs[fl][other] += 1
+# --- Journal operations ---
 
-    # Sort symptom times for efficient lookup (already sorted from SQL, but parse them)
-    sx_times = [datetime.fromisoformat(s["occurred_at"]) for s in symptom_rows]
+def log_journal_entry(description: str, occurred_at: str | None = None) -> dict:
+    """Log a journal entry."""
+    timestamp = validate_timestamp(occurred_at)
+    conn = get_connection()
+    cursor = conn.execute(
+        "INSERT INTO journal (description, occurred_at) VALUES (?, ?)",
+        (description, timestamp)
+    )
+    conn.commit()
+    entry_id = cursor.lastrowid
+    conn.close()
+    return {"id": entry_id, "status": "logged", "description": description, "when": timestamp}
 
-    # For each meal, find symptoms in the 0.5-8 hour window using bisect
-    # Track both hits (food + symptom) and misses (food + no symptom)
-    correlations = {}
-    food_no_symptom_count = Counter()  # meals where food had NO symptom follow
+def get_recent_journal(days_back: int = 7) -> list[dict]:
+    """Get journal entries from the last N days."""
+    conn = get_connection()
+    if days_back > 0:
+        cutoff = (datetime.now() - timedelta(days=days_back)).isoformat()
+        rows = conn.execute(
+            "SELECT * FROM journal WHERE occurred_at >= ? ORDER BY occurred_at DESC", (cutoff,)
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM journal ORDER BY occurred_at DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
-    for i, (mt, foods) in enumerate(zip(meal_times, meal_foods)):
-        window_start = mt + timedelta(hours=0.5)
-        window_end = mt + timedelta(hours=8)
-
-        # Find symptoms in this meal's window via bisect
-        lo = bisect_left(sx_times, window_start)
-        hi = bisect_right(sx_times, window_end)
-        window_symptoms = symptom_rows[lo:hi]
-
-        foods_lower = [f.lower() for f in foods]
-
-        if not window_symptoms:
-            # Negative evidence: this meal had no symptoms in the window
-            for fl in foods_lower:
-                food_no_symptom_count[fl] += 1
-            continue
-
-        for sx_idx in range(lo, hi):
-            symptom_row = symptom_rows[sx_idx]
-            hours_diff = (sx_times[sx_idx] - mt).total_seconds() / 3600
-
-            for food, fl in zip(foods, foods_lower):
-                key = f"{fl}|{symptom_row['symptom']}"
-                if key not in correlations:
-                    correlations[key] = {
-                        "food": food,
-                        "symptom": symptom_row["symptom"],
-                        "occurrences": 0,
-                        "total_severity": 0,
-                        "total_hours": 0,
-                        "instances": []
-                    }
-                c = correlations[key]
-                c["occurrences"] += 1
-                c["total_severity"] += symptom_row["severity"]
-                c["total_hours"] += hours_diff
-                c["instances"].append({
-                    "meal_time": meals[i]["occurred_at"],
-                    "symptom_time": symptom_row["occurred_at"],
-                    "hours_after": round(hours_diff, 1),
-                    "severity": symptom_row["severity"]
-                })
-
-        # Foods in this meal that had at least one symptom are NOT counted as misses.
-        # Foods with no matching symptom type still get negative evidence for those types,
-        # but that's handled implicitly by total_count - occurrences below.
-
-    # Score correlations using symptom rate (not just raw count)
-    results = []
-    for key, c in correlations.items():
-        fl = c["food"].lower()
-        n = c["occurrences"]
-        total_meals_with_food = food_total_count[fl]
-        meals_without_symptom = food_no_symptom_count.get(fl, 0)
-        symptom_rate = n / total_meals_with_food if total_meals_with_food > 0 else 0
-
-        avg_severity = c["total_severity"] / n
-        avg_hours = c["total_hours"] / n
-
-        # Confidence: requires both sufficient data AND a meaningful symptom rate
-        if total_meals_with_food < 3:
-            confidence = "low"
-        elif symptom_rate >= 0.5 and n >= 3:
-            confidence = "high"
-        elif symptom_rate >= 0.3 and n >= 2:
-            confidence = "medium"
-        else:
-            confidence = "low"
-
-        # Score: symptom_rate * avg_severity gives a balanced ranking
-        # A food eaten 20 times with 2 symptoms scores lower than one eaten 5 times with 4 symptoms
-        score = symptom_rate * avg_severity
-
-        # Detect co-occurring foods that always appear together
-        co_occurs = food_co_occurs.get(fl, Counter())
-        always_together = [
-            food for food, count in co_occurs.items()
-            if count == total_meals_with_food and total_meals_with_food >= 2
-        ]
-
-        result = {
-            "food": c["food"],
-            "symptom": c["symptom"],
-            "occurrences": n,
-            "times_eaten": total_meals_with_food,
-            "times_no_symptom": meals_without_symptom,
-            "symptom_rate": round(symptom_rate, 2),
-            "avg_severity": round(avg_severity, 1),
-            "avg_hours_after": round(avg_hours, 1),
-            "confidence": confidence,
-            "score": round(score, 2),
-            "instances": c["instances"]
-        }
-        if always_together:
-            result["always_eaten_with"] = always_together
-
-        results.append(result)
-
-    results.sort(key=lambda x: x["score"], reverse=True)
-
-    # Identify safe foods: eaten 3+ times with no symptoms at all
-    foods_with_symptoms = {c["food"].lower() for c in correlations.values()}
-    safe_foods = [
-        {"food": food, "times_eaten": count}
-        for food, count in food_total_count.items()
-        if food not in foods_with_symptoms and count >= 3
-    ]
-    safe_foods.sort(key=lambda x: x["times_eaten"], reverse=True)
-
-    return {
-        "status": "ok",
-        "days_analyzed": days_back,
-        "meals_count": len(meals),
-        "symptoms_count": len(symptom_rows),
-        "correlations": results[:10],
-        "safe_foods": safe_foods[:10],
-        "message": f"Analyzed {len(meals)} meals and {len(symptom_rows)} symptoms over {days_back} days."
-    }

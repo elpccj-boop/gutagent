@@ -7,10 +7,10 @@
 
 An AI agent that:
 1. **Knows your medical profile** — IBD, triggers, medications, labs, family history, preferences
-2. **Has tools** — meal logging, symptom tracking, vitals recording, medication event tracking, pattern analysis, data correction
-3. **Learns from your data** — correlates foods with symptoms, tracks vitals trends over time
-4. **Pulls dynamic context** — system prompt combines static profile with live database queries (full medication timeline, latest labs, recent vitals)
-5. **Converses naturally** — "I had eggs and mutton for lunch" or "my BP this morning was 138/85 pulse 72"
+2. **Has tools** — meal logging, symptom tracking, vitals, sleep, exercise, medications, journal, profile updates
+3. **Interprets your data** — Claude reviews your timeline to identify patterns and correlations
+4. **Pulls dynamic context** — system prompt combines static profile with recent data from all tables
+5. **Converses naturally** — "I had eggs and mutton for lunch" or "slept about 5 hours, pretty restless"
 
 ---
 
@@ -18,24 +18,24 @@ An AI agent that:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    CLI Interface                      │
-│              (rich + prompt_toolkit)                  │
+│                    CLI Interface                    │
+│              (rich + prompt_toolkit)                │
 └──────────────────────┬──────────────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────────────┐
-│                  Agent Loop (agent.py)                │
-│                                                      │
-│  1. User message + conversation history              │
-│  2. System prompt built from:                        │
-│     - Static profile (profile.json)                  │
-│     - Dynamic DB queries (meds, labs, vitals)        │
-│  3. Claude decides: respond OR call tool(s)          │
-│  4. If tool → execute → feed result back → loop      │
-│  5. Repeat until Claude produces final response       │
-│                                                      │
-│  (Core agentic loop — no framework, just while loop  │
-│   with Claude API + tool dispatch)                    │
+│                  Agent Loop (agent.py)              │
+│                                                     │
+│  1. User message + conversation history             │
+│  2. System prompt built from:                       │
+│     - Static profile (profile.json)                 │
+│     - Dynamic context (recent data from all tables) │
+│  3. Claude decides: respond OR call tool(s)         │
+│  4. If tool → execute → feed result back → loop     │
+│  5. Repeat until Claude produces final response     │
+│                                                     │
+│  (Core agentic loop — no framework, just while loop │
+│   with Claude API + tool dispatch)                  │
 └──────────┬──────────────────────────────────────────┘
            │
      ┌─────▼──────────────────────┐
@@ -44,12 +44,15 @@ An AI agent that:
      │                            │
      │  • log_meal                │
      │  • log_symptom             │
-     │  • log_medication_event    │
      │  • log_vital               │
-     │  • query_journal           │
-     │  • analyze_patterns        │
+     │  • log_medication_event    │
+     │  • log_sleep               │
+     │  • log_exercise            │
+     │  • log_journal             │
+     │  • query_logs              │
      │  • get_profile             │
-     │  • correct_entry           │
+     │  • correct_log             │
+     │  • update_profile          │
      └─────┬──────────────────────┘
            │
            ▼
@@ -62,7 +65,9 @@ An AI agent that:
      │  • vitals                  │
      │  • medication_events       │
      │  • labs                    │
-     │  • correlations            │
+     │  • sleep                   │
+     │  • exercise                │
+     │  • journal                 │
      └────────────────────────────┘
 ```
 
@@ -87,7 +92,7 @@ An AI agent that:
 
 ---
 
-## Project Structure (Actual)
+## Project Structure
 
 ```
 gutagent_project/
@@ -101,7 +106,7 @@ gutagent_project/
 │   ├── main.py                   # Entry point — CLI chat loop
 │   ├── agent.py                  # Core agent loop (LLM + tool dispatch)
 │   ├── config.py                 # Tool definitions, model config
-│   ├── profile.py                # Profile loading from JSON
+│   ├── profile.py                # Profile loading/saving
 │   ├── tools/
 │   │   ├── __init__.py
 │   │   └── registry.py           # All tool handlers + dispatch
@@ -114,18 +119,14 @@ gutagent_project/
 │   ├── rag/                      # Empty — Phase 4
 │   └── utils/
 │       ├── check_data.py         # Query DB with filters and args
-│       ├── fix_data.py           # One-off data corrections
-│       ├── import_history.py     # Bulk import vitals + med snapshots
 │       └── import_labs.py        # Bulk import lab results
-└── scratch/                      # Practice scripts
+└── README.md
 ```
 
 ### .gitignore
 ```
 data/gutagent.db
 data/profile.json
-utils/import_history.py
-utils/import_labs.py
 .env
 __pycache__/
 *.pyc
@@ -135,9 +136,32 @@ __pycache__/
 
 **Consolidated tool handlers** — All handlers in `registry.py`, all DB ops in `models.py`. Each handler is 5-10 lines. Split into separate files only when a module exceeds ~300 lines.
 
-**Profile vs Database** — Static facts (conditions, family history, dietary rules) live in `profile.json`. Dynamic data (medications, vitals, labs, meals, symptoms) live in the database. System prompt pulls from both sources every API call.
+**Profile vs Database** — Static facts (conditions, family history, dietary rules) live in `profile.json`. Dynamic data (meals, symptoms, vitals, sleep, exercise, etc.) lives in the database. System prompt pulls from both sources every API call.
+
+**Dynamic context includes everything** — At session start, Claude sees recent data from all tables (meals, symptoms, vitals, sleep, exercise, meds, labs, journal). This eliminates redundant queries. `query_logs` is for searching further back or filtering.
+
+**Claude interprets, code fetches** — No complex analysis code. Tools fetch data, Claude interprets patterns. This works better than coded correlation engines.
 
 **No ORM** — Direct SQLite with `sqlite3.Row` for dict-like access. Simpler, fewer dependencies, good enough for a personal tool.
+
+---
+
+## Dynamic Context
+
+The system prompt includes recent data from all tables, loaded at session start via `get_dynamic_context()`:
+
+| Data | Time Window | Notes |
+|------|-------------|-------|
+| Medication timeline | All history | Full timeline for context |
+| Latest labs | Most recent test date | Flagged abnormals |
+| Vitals | Last 7 days | BP, weight, etc. |
+| Meals | Last 3 days | More frequent, shorter window |
+| Symptoms | Last 7 days | With severity |
+| Sleep | Last 7 days | Hours and quality |
+| Exercise | Last 7 days | Activity and duration |
+| Journal | Last 7 days | Freeform notes |
+
+Claude always has this context without needing to query. Tools are for deeper searches or longer time ranges.
 
 ---
 
@@ -158,7 +182,7 @@ __pycache__/
 |--------|------|-------|
 | id | INTEGER | Primary key |
 | occurred_at | TIMESTAMP | When symptom occurred |
-| symptom | TEXT | bloating, fatigue, pain, brain_fog, etc. |
+| symptom | TEXT | bloating, fatigue, anxiety, brain_fog, etc. |
 | severity | INTEGER | 1-10, always asked — never guessed |
 | timing | TEXT | Relative to meals or time of day |
 | notes | TEXT | Additional context |
@@ -201,159 +225,134 @@ __pycache__/
 | reference_range | TEXT | Normal range |
 | status | TEXT | normal, high, low, critical, abnormal |
 | notes | TEXT | Clinical significance |
-| logged_at | TIMESTAMP | When imported into database |
+| logged_at | TIMESTAMP | When imported |
 
-Labs are imported in bulk via scripts, not logged through the agent conversationally.
-
-### correlations
+### sleep
 | Column | Type | Notes |
 |--------|------|-------|
 | id | INTEGER | Primary key |
-| food | TEXT | Trigger food |
-| symptom | TEXT | Associated symptom |
-| occurrences | INTEGER | Number of times observed |
-| avg_severity | REAL | Average symptom severity |
-| avg_hours_after | REAL | Typical delay |
-| confidence | TEXT | low, medium, high |
-| first_seen | TIMESTAMP | First observation |
-| last_seen | TIMESTAMP | Most recent observation |
-| notes | TEXT | Pattern details |
+| hours | REAL | Hours of sleep |
+| quality | TEXT | good, poor, interrupted, restless, etc. |
+| occurred_at | TIMESTAMP | The night of sleep |
+| logged_at | TIMESTAMP | When entered |
+| notes | TEXT | Additional context |
 
-Not yet populated — Phase 3 pattern analysis computes correlations on the fly. Persisting strong correlations is a future enhancement.
+### exercise
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER | Primary key |
+| activity | TEXT | walk, hike, gym, yoga, etc. |
+| duration_minutes | INTEGER | Duration in minutes |
+| occurred_at | TIMESTAMP | When exercise happened |
+| logged_at | TIMESTAMP | When entered |
+| notes | TEXT | Intensity, location, etc. |
 
----
-
-## System Prompt Architecture
-
-The system prompt is built dynamically on every API call by `prompts/system.py`:
-
-```
-┌─────────────────────────────────────────────────────┐
-│  System Prompt                                       │
-│                                                      │
-│  1. Agent identity and behavior rules                │
-│  2. Current date/time                                │
-│  3. Static profile (from profile.json)               │
-│  4. Dynamic context (from database):                 │
-│     - Full medication timeline (all events +         │
-│       snapshots, Claude interprets)                  │
-│     - Latest lab results                             │
-│     - Recent vitals (last 7 days)                    │
-│  5. Core behavior rules:                             │
-│     - Proactive logging (meals, symptoms,            │
-│       vitals, medication events)                     │
-│     - Never fabricate patient data (use general      │
-│       medical knowledge freely, but never invent     │
-│       facts about THIS patient)                      │
-│     - Always ask severity — never guess              │
-│     - Separate tool calls per concern                │
-│     - Use correct_entry for corrections,             │
-│       never create duplicates                        │
-│     - Dietary guidance based on profile              │
-│     - Pattern awareness                              │
-└─────────────────────────────────────────────────────┘
-```
-
-### Key prompt rules
-- **Never fabricate patient data** — only state what's in profile or database. General medical knowledge is fine for explaining conditions, suggesting questions for doctors, interpreting patterns, and providing dietary guidance.
-- **Always ask severity** — never guess symptom severity.
-- **Separate concerns** — if user mentions a meal AND a symptom, make separate tool calls.
-- **Proactive logging** — log meals, symptoms, vitals, medication events without asking permission.
-- **Corrections** — use `correct_entry` to update/delete, never create a new entry when fixing an old one.
+### journal
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER | Primary key |
+| description | TEXT | Freeform entry |
+| occurred_at | TIMESTAMP | When it happened |
+| logged_at | TIMESTAMP | When entered |
 
 ---
 
-## Tool Definitions
+## Tools
 
-Eight tools defined in `config.py`:
+| Tool | Purpose                                                           |
+|------|-------------------------------------------------------------------|
+| `log_meal` | Log what user ate — extracts foods, infers meal type and time     |
+| `log_symptom` | Log physical/mental symptoms with severity                        |
+| `log_vital` | Log BP, weight, temperature, etc.                                 |
+| `log_medication_event` | Track medication starts, stops, dose changes                      |
+| `log_sleep` | Log sleep hours and quality                                       |
+| `log_exercise` | Log physical activity                                             |
+| `log_journal` | Freeform notes and life events                                    |
+| `query_logs` | Search across all tables — for deeper dives or longer time ranges |
+| `get_profile` | Retrieve full medical profile                                     |
+| `correct_log` | Update or delete existing entries                                 |
+| `update_profile` | Add/modify profile data (conditions, suggestions, etc.)           |
 
-| Tool | Purpose | Required params |
-|------|---------|----------------|
-| `log_meal` | Log food intake | description, foods |
-| `log_symptom` | Log symptoms | symptom, severity |
-| `log_medication_event` | Track med changes | medication, event_type |
-| `log_vital` | Record BP, weight, etc. | vital_type |
-| `query_journal` | Search all data: meals, symptoms, vitals, meds, labs | query_type |
-| `analyze_patterns` | Find food-symptom correlations | (none required) |
-| `get_profile` | Retrieve medical profile | (none required) |
-| `correct_entry` | Update or delete existing entries | action, table, entry_id |
+### query_logs types
 
-All logging tools include an `occurred_at` parameter for backdating entries. Claude infers timestamps from natural language ("yesterday lunch" → yesterday at 12:30).
-
-### query_journal query types
-
-| Query type | What it searches | Default days_back |
+| Query Type | What it returns | Default days_back |
 |------------|-----------------|-------------------|
-| `recent_meals` | Meals table | 7 |
-| `recent_symptoms` | Symptoms table | 7 |
-| `food_search` | Meals by food name | all |
-| `symptom_search` | Symptoms by type | all |
+| `recent_meals` | Meals with foods | 7 |
+| `recent_symptoms` | Symptoms with severity | 7 |
+| `food_search` | Meals containing specific food | all |
+| `symptom_search` | Specific symptom history | all |
 | `date_range` | Meals + symptoms together | 7 |
-| `recent_vitals` | Vitals (BP, weight, temp, etc.) | 0 (all data) |
+| `recent_vitals` | Vitals (BP, weight, etc.) | 0 (all data) |
 | `recent_meds` | Medication events | 365 |
 | `recent_labs` | Lab results | latest test date |
+| `recent_sleep` | Sleep entries | 7 |
+| `recent_exercise` | Exercise entries | 7 |
+| `recent_journal` | Journal entries | 7 |
 
-### correct_entry actions
+### correct_log actions
 
 | Action | What it does | Required |
 |--------|-------------|----------|
 | `update` | Change fields on an existing entry | table, entry_id, updates dict |
 | `delete` | Remove an entry | table, entry_id |
 
-Allowed tables: meals, symptoms, vitals, medication_events.
+Allowed tables: meals, symptoms, vitals, medication_events, sleep, exercise, journal.
+
+### update_profile actions
+
+| Action | What it does |
+|--------|-------------|
+| `append` | Add to a list (e.g., conditions.other) |
+| `set` | Replace a value |
+| `remove` | Remove item from a list (matches by substring) |
 
 ---
 
-## Profile Structure (profile.json — static only)
+## Profile Structure (profile.json)
+
+The profile stores static facts. Dynamic data lives in the database.
 
 ```json
 {
-  "personal": { "sex", "dob", "menopause_status" },
+  "personal": {
+    "sex": "",
+    "dob": "YYYY-MM-DD",
+    "notes": ""
+  },
   "conditions": {
-    "primary": "IBD diagnosis",
-    "other": ["list of conditions"],
-    "ruled_out": ["celiac (2018 biopsy)", "giardia", "granulomas", "dysplasia"],
-    "procedures": ["mastectomy details", "colonoscopy details", "genetic testing status"]
+    "primary": "",
+    "chronic": [],
+    "other": [],
+    "ruled_out": [],
+    "procedures": []
   },
   "lifestyle": {
-    "salt_intake": "",
-    "weight": "",
-    "activity": "",
-    "stress": "",
-    "sleep": ""
+    "notes": ""
   },
-  "medication_history": {
-    "ssris_tried": "previous medications and outcomes",
-    "stimulants": "timeline of stimulant medications"
-  },
-  "clinical_context": {
-    "central_theory": "gut-brain axis hypothesis based on keto response",
-    "breast_cancer_presentation": "clinical details"
+  "medications": {
+    "notes": ""
   },
   "dietary": {
-    "known_triggers": {
-      "severe": ["confirmed severe reactions"],
-      "general": ["category-level triggers"],
-      "experimenting": ["foods being tested for tolerance"]
-    },
+    "triggers": [],
     "safe_foods": [],
-    "preferences": { "cooking_fat", "style", "avoids" },
-    "history": { "keto_8_months", "implication" }
+    "notes": ""
   },
   "family_history": {
-    "cancer": "multi-generational history",
-    "blood_pressure": "family BP history",
-    "genetic_testing": "status and urgency",
-    "treatment_warning": "relevant family treatment reactions"
+    "notes": ""
   },
-  "upcoming_appointments": {
-    "elf_test": "date and purpose",
-    "gastroenterologist": "date and doctor"
-  }
+  "clinical_context": {
+    "notes": ""
+  },
+  "suggestions": {
+    "tests_to_request": [],
+    "to_discuss_with_doctor": [],
+    "other": []
+  },
+  "upcoming_appointments": {}
 }
 ```
 
-Dynamic data (current medications, lab values, vitals) is NOT in the profile — it lives in the database and is pulled into the system prompt by `get_dynamic_context()`.
+Users expand this structure as needed. The template is minimal; individual profiles can have detailed nested structures.
 
 ---
 
@@ -363,7 +362,7 @@ Dynamic data (current medications, lab values, vitals) is NOT in the profile —
 while iteration < max_iterations:
     response = client.messages.create(
         model=MODEL,
-        system=system_prompt,    # Static profile + dynamic DB context
+        system=system_prompt,    # Static profile + dynamic context
         tools=TOOLS,
         messages=messages,       # Full conversation history
         max_tokens=4096
@@ -397,43 +396,33 @@ Key points:
 ### "I'm feeling bloated"
 1. Claude asks severity first (prompt rule — never guess)
 2. User says "about a 5"
-3. Claude calls `log_symptom(symptom="bloating", severity=5)` AND `query_journal(query_type="recent_meals")`
-4. Claude sees recent meals, notes any potential triggers, responds with observation
+3. Claude calls `log_symptom(symptom="bloating", severity=5)`
+4. Claude already has recent meals in dynamic context, notes potential triggers
 
-### "Actually change that severity to 4"
-1. Claude calls `correct_entry(action="update", table="symptoms", entry_id=6, updates={"severity": 4})`
-2. Existing entry updated — no duplicate created
+### "Slept about 5 hours, pretty restless"
+1. Claude calls `log_sleep(hours=5, quality="restless")`
+2. Logged and confirmed
 
-### "How has my weight changed over the years?"
-1. Claude calls `query_journal(query_type="recent_vitals", search_term="weight")`
-2. Returns all weight readings (days_back defaults to 0 = all data)
-3. Claude interprets the timeline narratively
+### "Went for a 20 minute walk"
+1. Claude calls `log_exercise(activity="walk", duration_minutes=20)`
+2. Logged and confirmed
 
-### "Do you see any patterns in my symptoms?"
-1. Claude calls `analyze_patterns(days_back=30)`
-2. Engine finds food-symptom correlations within 0.5-8 hour windows
-3. Results scored by frequency × severity, sorted by strength
-4. Claude presents findings with clinical context from the profile
+### "How am I doing?"
+1. Claude already has recent data in dynamic context
+2. Claude reviews meals, symptoms, sleep, exercise, vitals
+3. Responds with patterns and observations — no tool calls needed
 
----
+### "Do you see patterns in my symptoms over the last month?"
+1. Claude calls `query_logs` for longer time range (beyond dynamic context)
+2. Reviews the data and identifies correlations
 
-## Pattern Analysis Engine
+### "Remember that I have hypohidrosis"
+1. Claude calls `update_profile(section="conditions.chronic", action="append", value="Hypohidrosis (lifelong reduced sweating, poor heat tolerance)")`
+2. Profile updated, persists across sessions
 
-Located in `models.py` as `analyze_food_symptom_patterns()`.
-
-**How it works:**
-1. Fetches all meals and symptoms within the time window
-2. For each symptom, finds meals eaten 0.5-8 hours before
-3. Pairs each food from those meals with the symptom
-4. Counts occurrences, averages severity and time delay
-5. Assigns confidence: low (<3 occurrences), medium (3-4), high (5+)
-6. Returns top 10 correlations sorted by occurrences × average severity
-
-**What it found with early data:**
-- Every bloating episode followed grains or legumes
-- Severity correlated with amount: mung + amaranth combo (7/10) vs single grain (4/10)
-- Safe foods (chicken, mutton, banana, eggs) never appeared before symptom entries
-- Armodafinil withdrawal symptoms (fatigue, body aches) correctly identified as separate from food triggers
+### "Save that test suggestion"
+1. Claude calls `update_profile(section="suggestions.tests_to_request", action="append", value="B12 levels — fatigue and neurological symptoms")`
+2. Saved for future doctor visits
 
 ---
 
@@ -441,14 +430,13 @@ Located in `models.py` as `analyze_food_symptom_patterns()`.
 
 ```bash
 # Check specific tables
-python utils/check_data.py meals              # just meals
-python utils/check_data.py symptoms vitals     # symptoms and vitals
-python utils/check_data.py labs --status critical  # abnormal labs only
-python utils/check_data.py vitals --days 7     # last 7 days
+python -m gutagent.utils.check_data meals              # just meals
+python -m gutagent.utils.check_data symptoms vitals    # symptoms and vitals
+python -m gutagent.utils.check_data labs --status critical  # abnormal labs only
+python -m gutagent.utils.check_data vitals --days 7    # last 7 days
 
-# Bulk import (one-time, per user — gitignored)
-python utils/import_history.py    # historical vitals + med snapshots
-python utils/import_labs.py       # lab results from reports
+# Bulk import (one-time, per user)
+python -m gutagent.utils.import_labs    # lab results from reports
 ```
 
 ---
@@ -459,11 +447,11 @@ python utils/import_labs.py       # lab results from reports
 |-------|--------|-------------|
 | Phase 0 | ✅ Done | Python fundamentals, environment setup |
 | Phase 1 | ✅ Done | Core agent loop, tool calling, CLI |
-| Phase 2 | ✅ Done | Meal/symptom logging, vitals, medications, labs, bulk import, corrections, unified queries |
-| Phase 3 | ✅ Partial | Pattern analysis engine working, correlations computed on the fly. TODO: persist strong correlations, add medication-symptom correlation, time-of-day patterns |
+| Phase 2 | ✅ Done | Meal/symptom logging, vitals, medications, labs, corrections, unified queries |
+| Phase 3 | ✅ Done | Pattern interpretation, profile updates, sleep/exercise/journal tracking |
 | Phase 4 | 🔲 Planned | RAG knowledge base with IBD research |
-| Phase 5 | 🔲 Planned | USDA nutrition API, recipe tools |
-| Phase 6 | 🔲 Planned | Doctor report generator, web UI, conversation memory |
+| Phase 5 | 🔲 Planned | USDA nutrition API |
+| Phase 6 | 🔲 Planned | Web UI |
 
 ---
 
@@ -484,17 +472,14 @@ The codebase separates generic from personal:
 - Import scripts (one-time, per user's historical data)
 - `gutagent.db` (each user's data)
 
-To share: a new user copies `profile_template.json` to `profile.json`, fills in their details, and starts logging. A first-run setup wizard (future feature) could walk them through it conversationally.
+To share: a new user copies `profile_template.json` to `profile.json`, fills in their details, and starts logging.
 
 ---
 
 ## Next Steps
 
-1. **Accumulate data** — 2+ weeks of daily meal/symptom/BP logging for robust pattern analysis
-2. **Doctor report generator** — export clean summary for April 8 appointment (BP trends, symptom patterns, medication timeline, food triggers, lab results)
-3. **Persist correlations** — save strong patterns to correlations table
-4. **Phase 4: RAG** — ChromaDB with IBD dietary research for evidence-grounded advice
-5. **Phase 5: Nutrition API** — USDA FoodData Central for real nutritional data
-6. **Phase 6: Web/Mobile UI** — PWA or FastAPI + HTMX for phone access
-7. **Conversation memory** — persist key insights across sessions
-8. **Setup wizard** — guided first-run for new users
+1. **Accumulate data** — continue daily logging
+2. **Phase 4: RAG** — ChromaDB with IBD dietary research for evidence-grounded advice
+3. **Phase 5: Nutrition API** — USDA FoodData Central for real nutritional data
+4. **Phase 6: Web/Mobile UI** — PWA or FastAPI + HTMX for phone access
+5. **Setup wizard** — guided first-run for new users

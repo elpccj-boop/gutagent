@@ -6,32 +6,41 @@ from gutagent.db.models import (
     log_symptom as db_log_symptom,
     log_medication_event as db_log_medication_event,
     log_vital as db_log_vital,
-    update_entry as db_update_entry,
-    delete_entry as db_delete_entry,
+    update_log as db_update_log,
+    delete_log as db_delete_log,
     get_recent_meals,
     get_recent_symptoms,
     search_meals_by_food,
     search_symptoms,
-    analyze_food_symptom_patterns,
     get_recent_vitals,
     get_recent_meds,
     get_recent_labs,
+    log_sleep,
+    get_recent_sleep,
+    log_exercise,
+    get_recent_exercise,
+    log_journal_entry,
+    get_recent_journal,
 )
 
-from gutagent.profile import load_profile
+from gutagent.profile import load_profile, update_profile
 
 def execute_tool(tool_name: str, tool_input: dict) -> str:
     """Execute a tool and return its result as a string."""
+    print(f"[TOOL CALL] {tool_name}: {tool_input}")
     
     handlers = {
         "log_meal": _handle_log_meal,
         "log_symptom": _handle_log_symptom,
         "log_medication_event": _handle_log_medication_event,
         "log_vital": _handle_log_vital,
-        "correct_entry": _handle_correct_entry,
-        "query_journal": _handle_query_journal,
-        "analyze_patterns": _handle_analyze_patterns,
+        "correct_log": _handle_correct_log,
+        "query_logs": _handle_query_logs,
         "get_profile": _handle_get_profile,
+        "update_profile": _handle_update_profile,
+        "log_sleep": _handle_log_sleep,
+        "log_exercise": _handle_log_exercise,
+        "log_journal": _handle_log_journal,
     }
     
     handler = handlers.get(tool_name)
@@ -83,14 +92,13 @@ def _handle_log_vital(input: dict) -> dict:
         notes=input.get("notes"),
     )
 
-def _handle_correct_entry(input: dict) -> dict:
+def _handle_correct_log(input: dict) -> dict:
     if input["action"] == "delete":
-        return db_delete_entry(input["table"], input["entry_id"])
+        return db_delete_log(input["table"], input["entry_id"])
     else:
-        return db_update_entry(input["table"], input["entry_id"], input.get("updates", {}))
+        return db_update_log(input["table"], input["entry_id"], input.get("updates", {}))
 
-def _handle_query_journal(input: dict) -> dict:
-    print(f"[DEBUG query_journal] {input}")
+def _handle_query_logs(input: dict) -> dict:
     query_type = input["query_type"]
     days_back = input.get("days_back", 7)
     search_term = input.get("search_term", "")
@@ -130,14 +138,51 @@ def _handle_query_journal(input: dict) -> dict:
         labs = get_recent_labs(input.get("search_term"))
         return {"labs": labs, "count": len(labs)}
 
-    return {"error": f"Unknown query type: {query_type}"}
+    elif query_type == "recent_sleep":
+        days = input.get("days_back", 7)
+        entries = get_recent_sleep(days)
+        return {"sleep": entries, "count": len(entries)}
 
-def _handle_analyze_patterns(input: dict) -> dict:
-    return analyze_food_symptom_patterns(
-        days_back=input.get("days_back", 30),
-        symptom_focus=input.get("symptom_focus"),
-        food_focus=input.get("food_focus"),
-    )
+    elif query_type == "recent_exercise":
+        days = input.get("days_back", 7)
+        entries = get_recent_exercise(days)
+        return {"exercise": entries, "count": len(entries)}
+
+    elif query_type == "recent_journal":
+        days = input.get("days_back", 7)
+        entries = get_recent_journal(days)
+        return {"journal": entries, "count": len(entries)}
+
+    return {"error": f"Unknown query type: {query_type}"}
 
 def _handle_get_profile(input: dict) -> dict:
     return load_profile()
+
+def _handle_update_profile(input: dict) -> dict:
+    return update_profile(
+        section=input["section"],
+        action=input["action"],
+        value=input["value"],
+    )
+
+def _handle_log_sleep(input: dict) -> dict:
+    return log_sleep(
+        hours=input.get("hours"),
+        quality=input.get("quality"),
+        occurred_at=input.get("occurred_at"),
+        notes=input.get("notes"),
+    )
+
+def _handle_log_exercise(input: dict) -> dict:
+    return log_exercise(
+        activity=input["activity"],
+        duration_minutes=input.get("duration_minutes"),
+        occurred_at=input.get("occurred_at"),
+        notes=input.get("notes"),
+    )
+
+def _handle_log_journal(input: dict) -> dict:
+    return log_journal_entry(
+        description=input["description"],
+        occurred_at=input.get("occurred_at"),
+    )

@@ -182,10 +182,10 @@ TOOLS = [
         }
     },
     {
-        "name": "query_journal",
+        "name": "query_logs",
         "description": (
-            "Search the food journal and symptom log. Use to find what the user ate "
-            "recently, check symptom history, or find specific foods."
+            "Search logged data — meals, symptoms, vitals, medications, labs. "
+            "Use to check history, find patterns, or look up specific entries."
         ),
         "input_schema": {
             "type": "object",
@@ -193,15 +193,16 @@ TOOLS = [
                 "query_type": {
                     "type": "string",
                     "enum": [
-                        "recent_meals", "recent_symptoms",
-                        "food_search", "symptom_search", "date_range",
-                        "recent_vitals", "recent_meds", "recent_labs"
+                        "recent_meals", "recent_symptoms", "food_search",
+                        "symptom_search", "date_range", "recent_vitals",
+                        "recent_meds", "recent_labs", "recent_sleep",
+                        "recent_exercise","recent_journal"
                     ],
                     "description": "Type of query"
                 },
                 "search_term": {
                     "type": "string",
-                    "description": "Food or symptom to search for"
+                    "description": "Search filter — food name, symptom type, vital type, or lab test date depending on query_type"
                 },
                 "days_back": {
                     "type": "integer",
@@ -209,31 +210,6 @@ TOOLS = [
                 }
             },
             "required": ["query_type"]
-        }
-    },
-    {
-        "name": "analyze_patterns",
-        "description": (
-            "Analyze correlations between foods and symptoms over time. Call when "
-            "the user asks about recurring issues, what's causing symptoms, or wants "
-            "to see patterns in their data."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "symptom_focus": {
-                    "type": "string",
-                    "description": "Optional: focus on a specific symptom"
-                },
-                "food_focus": {
-                    "type": "string",
-                    "description": "Optional: focus on a specific food"
-                },
-                "days_back": {
-                    "type": "integer",
-                    "description": "Days of data to analyze (default 30)"
-                }
-            }
         }
     },
     {
@@ -245,9 +221,9 @@ TOOLS = [
         }
     },
     {
-        "name": "correct_entry",
+        "name": "correct_log",
         "description": (
-            "Update or delete an existing entry. Use when the user wants to fix "
+            "Update or delete an existing log entry. Use when the user wants to fix "
             "a value (like severity, timestamp, description) or remove a duplicate. "
             "Never create a new entry when a correction is needed."
         ),
@@ -261,7 +237,7 @@ TOOLS = [
                 },
                 "table": {
                     "type": "string",
-                    "enum": ["meals", "symptoms", "vitals", "medication_events"],
+                    "enum": ["meals", "symptoms", "vitals", "medication_events", "sleep", "exercise", "journal"],
                     "description": "Which table the entry is in"
                 },
                 "entry_id": {
@@ -274,6 +250,127 @@ TOOLS = [
                 }
             },
             "required": ["action", "table", "entry_id"]
+        }
+    },
+    {
+        "name": "update_profile",
+        "description": (
+            "Add, update, or remove information in the user's medical profile. Use when "
+            "the user shares permanent facts about themselves — chronic conditions, baseline "
+            "traits, dietary preferences, family history, etc. This persists across sessions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "section": {
+                    "type": "string",
+                    "description": (
+                        "Dot-notation path to the section to update. Examples: "
+                        "'conditions.chronic', 'conditions.other', 'dietary.triggers', "
+                        "'dietary.safe_foods', 'lifestyle.notes', 'family_history.notes', "
+                        "'personal.notes'"
+                    )
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["append", "set", "remove"],
+                    "description": (
+                        "append: add to a list. "
+                        "set: replace a value (string or list). "
+                        "remove: remove an item from a list (matches by substring)."
+                    )
+                },
+                "value": {
+                    "type": "string",
+                    "description": "The value to add, set, or remove"
+                }
+            },
+            "required": ["section", "action", "value"]
+        }
+    },
+    {
+        "name": "log_sleep",
+        "description": (
+            "Log sleep information. Use when the user mentions how they slept — "
+            "hours, quality, or both."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type": "number",
+                    "description": "Hours of sleep"
+                },
+                "quality": {
+                    "type": "string",
+                    "description": "Sleep quality — good, poor, interrupted, restless, deep, etc."
+                },
+                "occurred_at": {
+                    "type": "string",
+                    "description": (
+                        "The night of sleep, in YYYY-MM-DD HH:MM:SS format. "
+                        "Use the date the user went to bed. Leave out if last night."
+                    )
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Additional context — woke up multiple times, dreams, etc."
+                }
+            }
+        }
+    },
+    {
+        "name": "log_exercise",
+        "description": (
+            "Log exercise or physical activity. Use when the user mentions "
+            "walking, hiking, gym, yoga, or any physical activity."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "activity": {
+                    "type": "string",
+                    "description": "Type of activity — walk, hike, gym, yoga, run, swim, etc."
+                },
+                "duration_minutes": {
+                    "type": "integer",
+                    "description": "Duration in minutes"
+                },
+                "occurred_at": {
+                    "type": "string",
+                    "description": (
+                        "When the exercise happened, in YYYY-MM-DD HH:MM:SS format. "
+                        "Leave out if just now."
+                    )
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Additional context — intensity, location, how it felt"
+                }
+            },
+            "required": ["activity"]
+        }
+    },
+    {
+        "name": "log_journal",
+        "description": (
+            "Log a freeform journal entry. Use when the user wants to note something "
+            "that isn't a meal, symptom, vital, medication, sleep, or exercise — "
+            "life events, context, thoughts, or anything they want to record."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "What the user wants to record"
+                },
+                "occurred_at": {
+                    "type": "string",
+                    "description": "When this happened, in YYYY-MM-DD HH:MM:SS format. Leave out if now."
+                }
+            },
+            "required": ["description"]
         }
     },
 ]
