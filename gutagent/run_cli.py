@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""GutAgent — Personalized Dietary AI Agent (CLI Interface)."""
+"""
+GutAgent — Personalized Dietary AI Agent (CLI Interface).
+
+Usage:
+    python -m gutagent.run_cli
+"""
 
 import sys
 import os
@@ -10,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from gutagent.agent import run_agent
 from gutagent.profile import load_profile
 from gutagent.db.models import init_db
-from gutagent.config import MODEL, MODEL_HAIKU
+from gutagent.config import MODEL_HAIKU, MODEL_SONNET, MODEL
 
 # Try to use rich for pretty output, fall back to plain text
 try:
@@ -159,7 +164,7 @@ def main():
             continue
 
         if user_input == "--sonnet":
-            current_model = MODEL
+            current_model = MODEL_SONNET
             print("Model: Sonnet")
             continue
         
@@ -184,7 +189,7 @@ def main():
             if "api_key" in error_msg.lower() or "authentication" in error_msg.lower():
                 print("\n❌ API key not set. Run: export ANTHROPIC_API_KEY='your-key-here'\n")
             elif "credit balance" in error_msg.lower():
-                print("\n❌ Out of API credits. Add credits or use --haiku for cheaper model.\n")
+                print("\n❌ Out of API credits. Add credits.\n")
             else:
                 print(f"\n❌ Error: {error_msg}\n")
                 if verbose:

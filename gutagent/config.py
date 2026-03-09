@@ -3,8 +3,9 @@
 import os
 
 # Model config
-MODEL = "claude-sonnet-4-5-20250929"
-MODEL_HAIKU = "claude-haiku-3-5-20241022"
+MODEL_HAIKU = "claude-haiku-4-5-20251001"
+MODEL_SONNET = "claude-sonnet-4-5-20250929"
+MODEL = MODEL_HAIKU # Default
 MAX_TOKENS = 4096
 
 # API key — set via environment variable

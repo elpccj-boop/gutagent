@@ -1,0 +1,25 @@
+{
+    "name": "GutAgent",
+    "short_name": "GutAgent",
+    "description": "Your personalized dietary AI assistant",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#f9fafb",
+    "theme_color": "#065f46",
+    "orientation": "portrait",
+    "icons": [
+        {
+            "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23065f46' width='100' height='100' rx='20'/><text y='.9em' x='50' text-anchor='middle' font-size='70'>🥗</text></svg>",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any"
+        },
+        {
+            "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23065f46' width='100' height='100' rx='20'/><text y='.9em' x='50' text-anchor='middle' font-size='70'>🥗</text></svg>",
+            "sizes": "512x512",
+            "type": "image/svg+xml",
+            "purpose": "maskable"
+        }
+    ],
+    "categories": ["health", "lifestyle", "medical"]
+}

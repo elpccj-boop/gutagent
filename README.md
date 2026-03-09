@@ -11,6 +11,7 @@ A personalized dietary AI agent for managing inflammatory bowel disease. Built w
 - **Finds patterns** — Claude interprets your data to identify correlations
 - **Remembers what matters** — save test suggestions, update your profile conversationally
 - **Saves recipes** — track nutrition consistently for dishes you eat often
+- **Works anywhere** — CLI for terminal, mobile-friendly web UI for on-the-go
 
 ## Quick Start
 
@@ -19,11 +20,11 @@ A personalized dietary AI agent for managing inflammatory bowel disease. Built w
 cd gutagent_project
 
 # Create a virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # Install dependencies
-pip install anthropic rich prompt-toolkit
+pip install -r requirements.txt
 
 # Set your API key
 export ANTHROPIC_API_KEY="your-key-here"
@@ -32,8 +33,12 @@ export ANTHROPIC_API_KEY="your-key-here"
 cp data/profile_template.json data/profile.json
 # Then customize data/profile.json with your info
 
-# Run it!
-python -m gutagent.main
+# Run CLI
+python -m gutagent.run_cli
+
+# Or run Web UI
+python -m gutagent.run_web
+# Then open http://localhost:8000
 ```
 
 ## Usage
@@ -70,45 +75,75 @@ GutAgent: Added to your profile under chronic conditions. I'll keep this in mind
 You: Save my dal tadka recipe — it's toor dal, tomatoes, onion, garlic, cumin, turmeric, ghee
 GutAgent: Saved "Dal Tadka" with 7 ingredients. Next time you have it, I'll use 
          this for consistent nutrition tracking.
-
-You: --haiku
-Model: Haiku
 ```
 
-## Commands
+## Running the App
+
+### CLI
+```bash
+python -m gutagent.run_cli
+```
 
 | Command | Effect |
 |---------|--------|
-| `--haiku` | Use cheaper Haiku model (good for routine logging) |
-| `--sonnet` | Use Sonnet model (default, better analysis) |
+| `--haiku` | Use Haiku model (default, cheaper) |
+| `--sonnet` | Use Sonnet model (better analysis) |
 | `--verbose` | Show tool calls |
 | `--quiet` | Hide tool calls (default) |
 | `quit` | Exit |
+
+### Web UI
+```bash
+python -m gutagent.run_web
+```
+
+Opens at `http://localhost:8000`. Access from phone on same WiFi using the network URL shown.
+
+| Feature | Description |
+|---------|-------------|
+| Streaming | Responses appear word-by-word |
+| Model toggle | Switch Haiku/Sonnet in settings |
+| Show tools | Toggle tool call visibility |
+| Quick actions | One-tap buttons for common logging |
+| PWA install | Add to home screen on mobile |
+
+**To install on phone:**
+- iOS Safari: Share → "Add to Home Screen"
+- Android Chrome: Menu → "Add to Home Screen"
 
 ## Project Structure
 
 ```
 gutagent_project/
 ├── gutagent/
-│   ├── main.py          # CLI entry point
+│   ├── run_cli.py       # CLI entry point
+│   ├── run_web.py       # Web server entry point
 │   ├── agent.py         # Core agent loop
 │   ├── config.py        # Model settings + tool definitions
 │   ├── profile.py       # Medical profile loading/saving
+│   ├── api/
+│   │   └── server.py    # FastAPI backend
+│   ├── web/
+│   │   ├── index.html   # Web UI entry point
+│   │   ├── app.jsx      # React chat interface
+│   │   ├── sw.js        # Service worker (offline)
+│   │   └── manifest.json # PWA config
 │   ├── tools/
 │   │   └── registry.py  # Tool dispatch
 │   ├── db/
 │   │   └── models.py    # SQLite operations
 │   ├── prompts/
 │   │   └── system.py    # System prompt builder
-│   ├── rag/             # Phase 7: knowledge base (planned)
 │   └── utils/
-│       ├── check_data.py    # Query DB from command line
-│       └── import_labs.py   # Bulk import lab results
+│       └── check_data.py    # Query DB from command line
 ├── data/
 │   ├── profile.json         # Your medical profile (gitignored)
 │   ├── profile_template.json
-│   └── gutagent.db          # SQLite database (auto-created)
-└── README.md
+│   └── gutagent.db          # SQLite database (auto-created, gitignored)
+├── requirements.txt
+├── ARCHITECTURE.md          # Detailed technical documentation
+├── README.md
+└── .gitignore
 ```
 
 ## Tools
@@ -164,11 +199,10 @@ No need to query — Claude already has context. Use `query_logs` for deeper sea
 ## API Costs
 
 Rough estimates:
-- ~$0.02 per message (Sonnet)
-- ~$0.20 per day (10 messages)
-- ~$5 lasts about a month
+- **Haiku (default):** ~$0.002 per message
+- **Sonnet:** ~$0.02 per message
 
-Use `--haiku` for routine logging to reduce costs by ~10x.
+Using Haiku for routine logging and Sonnet for analysis keeps costs low (~$1-2/month typical use).
 
 ## Build Phases
 
@@ -180,8 +214,9 @@ Use `--haiku` for routine logging to reduce costs by ~10x.
 | Phase 3 | ✅ Done | Sleep/exercise/journal, profile updates, pattern interpretation |
 | Phase 4 | ⏭️ Skipped | RAG knowledge base (deferred) |
 | Phase 5 | ✅ Done | Nutrition tracking with Claude estimates |
-| Phase 6 | 🔲 Planned | Web UI |
-| Phase 7 | 🔲 Planned | RAG for IBD research if needed |
+| Phase 6 | ✅ Done | Web UI (FastAPI + React PWA) |
+| Phase 7 | 🔲 Planned | Hosting + authentication |
+| Phase 8 | 🔲 Planned | Setup wizard for new users |
 
 ## Design Philosophy
 
@@ -190,4 +225,5 @@ Use `--haiku` for routine logging to reduce costs by ~10x.
 - **Claude estimates nutrition** — no external API; works for any cuisine
 - **Profile + Database** — static facts in JSON, dynamic data in SQLite
 - **Dynamic context** — Claude sees recent data automatically, queries only for deeper dives
+- **Two interfaces, one agent** — CLI and web UI share the same core logic
 - **Conversational** — just talk naturally, the agent figures out what to log

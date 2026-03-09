@@ -12,6 +12,7 @@ An AI agent that:
 4. **Pulls dynamic context** — system prompt combines static profile with recent data from all tables
 5. **Tracks nutrition** — Claude estimates calories, protein, and 11 micronutrients for every meal
 6. **Converses naturally** — "I had eggs and mutton for lunch" or "slept about 5 hours, pretty restless"
+7. **Available via CLI or Web** — Terminal interface for power users, mobile-friendly web UI for on-the-go
 
 ---
 
@@ -19,11 +20,20 @@ An AI agent that:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    CLI Interface                        │
-│              (rich + prompt_toolkit)                    │
+│                   User Interfaces                       │
 │                                                         │
-│  Commands: --haiku, --sonnet, --verbose, --quiet        │
-└──────────────────────┬──────────────────────────────────┘
+│  ┌─────────────────┐      ┌──────────────────────────┐  │
+│  │   CLI (run_cli) │      │   Web UI (run_web)       │  │
+│  │   rich + prompt │      │   FastAPI + React PWA    │  │
+│  │   --haiku       │      │   Streaming responses    │  │
+│  │   --sonnet      │      │   Mobile-first           │  │
+│  │   --verbose     │      │   Installable (PWA)      │  │
+│  │   --quiet       │      │   Settings panel         │  │
+│  └────────┬────────┘      └────────────┬─────────────┘  │
+│           │                            │                │
+│           └──────────┬─────────────────┘                │
+│                      ▼                                  │
+└─────────────────────────────────────────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────────────────┐
@@ -103,17 +113,21 @@ An AI agent that:
 | Component | Choice | Why |
 |-----------|--------|-----|
 | Language | Python 3.13 | Best AI ecosystem |
-| LLM | Claude API (claude-sonnet-4-5) | Reasoning, function calling, empathetic tone |
+| LLM | Claude API (Haiku default, Sonnet for analysis) | Reasoning, function calling, empathetic tone |
 | Database | SQLite (WAL mode) | Zero setup, file-based, perfect for personal tools |
 | CLI | `rich` + `prompt_toolkit` | Beautiful terminal UI |
+| Web Backend | FastAPI + SSE streaming | Lightweight, async, real-time responses |
+| Web Frontend | React + Tailwind (CDN) | Mobile-first, no build step |
+| PWA | Service worker + manifest | Installable on phone, offline app shell |
 | Profile | JSON file | Static medical data, injected into system prompt |
 | Nutrition | Claude estimates | No external API — Claude knows food nutrition |
 
 ### Future additions (not yet built)
 | Component | Choice | Purpose |
 |-----------|--------|---------|
-| Web UI | FastAPI + HTMX or Streamlit | When CLI isn't enough (Phase 6) |
-| Vector DB | ChromaDB | RAG over IBD dietary research (Phase 7) |
+| Hosting | Fly.io / Railway / VPS | Access from anywhere |
+| Auth | Simple username/password | Secure remote access |
+| Vector DB | ChromaDB | RAG over IBD dietary research (if needed) |
 
 ---
 
@@ -122,16 +136,26 @@ An AI agent that:
 ```
 gutagent_project/
 ├── .gitignore
+├── requirements.txt
 ├── data/
 │   ├── gutagent.db*              # SQLite database (all dynamic data)
 │   ├── profile.json              # Static medical profile (gitignored)
 │   └── profile_template.json     # Empty template for new users
 ├── gutagent/
 │   ├── __init__.py
-│   ├── main.py                   # Entry point — CLI chat loop
+│   ├── run_cli.py                # Entry point — CLI chat loop
+│   ├── run_web.py                # Entry point — Web server
 │   ├── agent.py                  # Core agent loop (LLM + tool dispatch)
 │   ├── config.py                 # Tool definitions, model config
 │   ├── profile.py                # Profile loading/saving
+│   ├── api/
+│   │   ├── __init__.py
+│   │   └── server.py             # FastAPI app + streaming endpoint
+│   ├── web/
+│   │   ├── index.html            # Entry HTML + styles
+│   │   ├── app.jsx               # React chat UI
+│   │   ├── sw.js                 # Service worker (offline caching)
+│   │   └── manifest.json         # PWA manifest
 │   ├── tools/
 │   │   ├── __init__.py
 │   │   └── registry.py           # All tool handlers + dispatch
@@ -141,11 +165,12 @@ gutagent_project/
 │   ├── prompts/
 │   │   ├── __init__.py
 │   │   └── system.py             # System prompt builder (static + dynamic + alerts)
-│   ├── rag/                      # Empty — Phase 7
+│   ├── rag/                      # Empty — future use
 │   └── utils/
 │       └── check_data.py         # Query DB with filters and args
 ├── tests/
-└── README.md
+├── README.md
+└── ARCHITECTURE.md               # Detailed technical documentation
 ```
 
 ### .gitignore
@@ -174,17 +199,92 @@ __pycache__/
 
 **All timestamps local** — No UTC conversion. `occurred_at` is always local time (inferred by Claude from context or set to current time). Easier to read and reason about.
 
+**Two interfaces, one agent** — Both CLI and web use the same `agent.py`. The agent is interface-agnostic.
+
 ---
 
-## CLI Commands
+## Running the App
+
+### CLI
+```bash
+python -m gutagent.run_cli
+```
 
 | Command | Effect |
 |---------|--------|
-| `--haiku` | Switch to Haiku model (cheaper, good for routine logging) |
-| `--sonnet` | Switch to Sonnet model (default, better analysis) |
+| `--haiku` | Switch to Haiku model (default) |
+| `--sonnet` | Switch to Sonnet model (better analysis) |
 | `--verbose` | Show tool calls |
 | `--quiet` | Hide tool calls (default) |
 | `quit` / `exit` | End session |
+
+### Web
+```bash
+python -m gutagent.run_web
+```
+
+Opens at `http://localhost:8000`. Access from phone on same WiFi via the network URL shown.
+
+| Feature | Description |
+|---------|-------------|
+| Model toggle | Switch Haiku/Sonnet in settings |
+| Show tools | Toggle tool call visibility in settings |
+| Clear conversation | Reset chat history |
+| Quick actions | Pre-filled prompts for common logging |
+| PWA install | Add to home screen on mobile |
+
+---
+
+## Web UI Architecture
+
+### Backend (api/server.py)
+
+FastAPI server with:
+- `POST /api/chat` — Streaming chat endpoint (SSE)
+- `POST /api/clear` — Clear session history
+- `GET /api/context` — Get current dynamic context
+- `GET /api/profile` — Get user profile
+- Static file serving for web UI
+
+Session history stored in-memory (resets on server restart).
+
+### Frontend (web/)
+
+React app loaded via CDN (no build step):
+- `index.html` — Entry point, Tailwind config, markdown styles
+- `app.jsx` — Chat UI, settings panel, quick actions
+- `sw.js` — Service worker for offline caching
+- `manifest.json` — PWA configuration
+
+### Streaming Flow
+
+```
+Browser                    Server                     Claude API
+   │                          │                            │
+   │  POST /api/chat          │                            │
+   │  {message, session_id}   │                            │
+   │ ─────────────────────►   │                            │
+   │                          │  messages.stream()         │
+   │                          │ ──────────────────────►    │
+   │                          │                            │
+   │                          │  ◄── text delta ───────    │
+   │  ◄─ SSE: {type: text} ── │                            │
+   │                          │  ◄── text delta ───────    │
+   │  ◄─ SSE: {type: text} ── │                            │
+   │                          │                            │
+   │                          │  ◄── tool_use ─────────    │
+   │  ◄─ SSE: {type: tool} ── │                            │
+   │                          │                            │
+   │                          │  [execute tool locally]    │
+   │                          │                            │
+   │                          │  tool_result ──────────►   │
+   │                          │                            │
+   │                          │  ◄── text delta ───────    │
+   │  ◄─ SSE: {type: text} ── │                            │
+   │                          │                            │
+   │  ◄─ SSE: {type: done} ── │                            │
+   │                          │                            │
+```
 
 ---
 
@@ -507,7 +607,7 @@ Users expand this structure as needed. The template is minimal; individual profi
 ```python
 while iteration < max_iterations:
     response = client.messages.create(
-        model=model,              # Sonnet or Haiku
+        model=model,              # Haiku (default) or Sonnet
         system=system_prompt,     # Static profile + dynamic context + alerts
         tools=TOOLS,
         messages=messages,        # Full conversation history
@@ -528,7 +628,7 @@ Key points:
 - Claude can call multiple tools in a single response
 - Message flow: user → assistant(tool_use) → user(tool_result) → assistant(text)
 - Max iterations prevent infinite loops
-- Model switchable at runtime via `--haiku` / `--sonnet`
+- Model switchable at runtime via settings (web) or flags (CLI)
 
 ---
 
@@ -599,20 +699,20 @@ python -m gutagent.utils.check_data vitals --days 7    # last 7 days
 | Phase 3 | ✅ Done | Pattern interpretation, profile updates, sleep/exercise/journal tracking |
 | Phase 4 | ⏭️ Skipped | RAG knowledge base (deferred — Claude's knowledge + web search sufficient) |
 | Phase 5 | ✅ Done | Nutrition tracking (Claude estimates, no external API) |
-| Phase 6 | 🔲 Planned | Web UI |
-| Phase 7 | 🔲 Planned | RAG for IBD research if needed |
-
+| Phase 6 | ✅ Done | Web UI (FastAPI + React PWA, streaming, mobile-first) |
+| Phase 7 | 🔲 Planned | Hosting + authentication |
+| Phase 8 | 🔲 Planned | Setup wizard for new users |
+| Phase 9 | 🔲 Planned | Profile restructure + insights storage |
 
 ---
 
 ## API Costs
 
-Rough estimates with Sonnet:
-- ~$0.02 per message exchange
-- ~$0.20 per day (10 messages)
-- ~$5 lasts about a month
+Rough estimates:
+- **Haiku (default):** ~$0.002 per message exchange
+- **Sonnet:** ~$0.02 per message exchange
 
-Use `--haiku` for routine logging to reduce costs by ~10x.
+Using Haiku for routine logging and Sonnet for analysis keeps costs low (~$1-2/month for typical use).
 
 ---
 
@@ -625,6 +725,7 @@ The codebase separates generic from personal:
 - Database schema
 - All tool definitions and handlers
 - System prompt structure
+- Web UI (frontend + backend)
 - Utility scripts (check_data.py)
 - `profile_template.json`
 
@@ -639,7 +740,7 @@ To share: a new user copies `profile_template.json` to `profile.json`, fills in 
 
 ## Next Steps
 
-1. **Accumulate data** — continue daily logging with nutrition tracking
-2. **Phase 6: Web/Mobile UI** — PWA or FastAPI + HTMX for phone access
-3. **Phase 7: RAG** — ChromaDB with IBD dietary research if Claude's knowledge proves insufficient
-4. **Setup wizard** — guided first-run for new users
+1. **Hosting + Auth** — Deploy to VPS/cloud, add simple authentication for remote access
+2. **Setup wizard** — Guided first-run for new users
+3. **Profile restructure** — Better organization of static vs dynamic data, add insights/correlations storage
+4. **Offline queue** — Queue messages when offline, sync when back online
