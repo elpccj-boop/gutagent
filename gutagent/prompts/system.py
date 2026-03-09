@@ -3,15 +3,25 @@
 import json
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+
 
 def get_dynamic_context() -> str:
     """Pull recent data from all tables for the system prompt."""
     db_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "gutagent.db")
+
+    if not os.path.exists(db_path):
+        return "No data logged yet."
+
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
     sections = []
+
+    # Cutoffs in local time
+    now = datetime.now()
+    cutoff_7_days = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff_3_days = (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
 
     # Medication timeline (all history — important for context)
     meds = conn.execute("""
@@ -48,9 +58,9 @@ def get_dynamic_context() -> str:
     vitals = conn.execute("""
         SELECT vital_type, systolic, diastolic, heart_rate, value, unit, occurred_at, notes
         FROM vitals
-        WHERE occurred_at >= datetime('now', '-7 days')
+        WHERE occurred_at >= ?
         ORDER BY occurred_at DESC
-    """).fetchall()
+    """, (cutoff_7_days,)).fetchall()
     if vitals:
         lines = []
         for v in vitals:
@@ -60,27 +70,31 @@ def get_dynamic_context() -> str:
                 lines.append(f"- {v['occurred_at']}: {v['vital_type']} {v['value']} {v['unit']} | {v['notes'] or ''}")
         sections.append("## Recent Vitals (Last 7 Days)\n" + "\n".join(lines))
 
-    # Recent meals — last 3 days
+    # Recent meals — last 3 days (with nutrition if available)
     meals = conn.execute("""
-        SELECT occurred_at, meal_type, description, foods
-        FROM meals
-        WHERE occurred_at >= datetime('now', '-3 days')
-        ORDER BY occurred_at DESC
-    """).fetchall()
+        SELECT m.occurred_at, m.meal_type, m.description, 
+               mn.calories, mn.protein, mn.carbs, mn.fat
+        FROM meals m
+        LEFT JOIN meal_nutrition mn ON m.id = mn.meal_id
+        WHERE m.occurred_at >= ?
+        ORDER BY m.occurred_at DESC
+    """, (cutoff_3_days,)).fetchall()
     if meals:
         lines = []
         for m in meals:
-            foods = m['foods'] if m['foods'] else ''
-            lines.append(f"- {m['occurred_at']}: {m['meal_type'] or 'meal'} — {m['description']}")
+            base = f"- {m['occurred_at']}: {m['meal_type'] or 'meal'} — {m['description']}"
+            if m['calories']:
+                base += f" [{int(m['calories'])} cal, {int(m['protein'])}g protein]"
+            lines.append(base)
         sections.append("## Recent Meals (Last 3 Days)\n" + "\n".join(lines))
 
     # Recent symptoms — last 7 days
     symptoms = conn.execute("""
         SELECT occurred_at, symptom, severity, notes
         FROM symptoms
-        WHERE occurred_at >= datetime('now', '-7 days')
+        WHERE occurred_at >= ?
         ORDER BY occurred_at DESC
-    """).fetchall()
+    """, (cutoff_7_days,)).fetchall()
     if symptoms:
         lines = []
         for s in symptoms:
@@ -92,9 +106,9 @@ def get_dynamic_context() -> str:
     sleep = conn.execute("""
         SELECT occurred_at, hours, quality, notes
         FROM sleep
-        WHERE occurred_at >= datetime('now', '-7 days')
+        WHERE occurred_at >= ?
         ORDER BY occurred_at DESC
-    """).fetchall()
+    """, (cutoff_7_days,)).fetchall()
     if sleep:
         lines = []
         for s in sleep:
@@ -108,9 +122,9 @@ def get_dynamic_context() -> str:
     exercise = conn.execute("""
         SELECT occurred_at, activity, duration_minutes, notes
         FROM exercise
-        WHERE occurred_at >= datetime('now', '-7 days')
+        WHERE occurred_at >= ?
         ORDER BY occurred_at DESC
-    """).fetchall()
+    """, (cutoff_7_days,)).fetchall()
     if exercise:
         lines = []
         for e in exercise:
@@ -121,25 +135,65 @@ def get_dynamic_context() -> str:
 
     # Recent journal — last 7 days
     journal = conn.execute("""
-        SELECT occurred_at, description
+        SELECT logged_at, description
         FROM journal
-        WHERE occurred_at >= datetime('now', '-7 days')
-        ORDER BY occurred_at DESC
-    """).fetchall()
+        WHERE logged_at >= ?
+        ORDER BY logged_at DESC
+    """, (cutoff_7_days,)).fetchall()
     if journal:
         lines = []
         for j in journal:
-            lines.append(f"- {j['occurred_at']}: {j['description']}")
+            lines.append(f"- {j['logged_at']}: {j['description']}")
         sections.append("## Recent Journal (Last 7 Days)\n" + "\n".join(lines))
 
+    # Saved recipes
+    recipes = conn.execute("SELECT name FROM recipes ORDER BY name").fetchall()
+    if recipes:
+        recipe_names = [r['name'] for r in recipes]
+        sections.append("## Saved Recipes\n" + ", ".join(recipe_names))
+
     conn.close()
-    return "\n\n".join(sections)
+    return "\n\n".join(sections) if sections else "No data logged yet."
+
+
+def get_nutrition_alerts_text() -> str:
+    """Get formatted nutrition alerts for the system prompt."""
+    from gutagent.db.models import get_nutrition_alerts
+
+    try:
+        alerts = get_nutrition_alerts(days=3)
+    except Exception:
+        return ""
+
+    if not alerts:
+        return ""
+
+    lines = ["## Nutrition Alerts (Last 3 Days)"]
+    for alert in alerts:
+        nutrient_name = alert["nutrient"].replace("_", " ").title()
+
+        if alert["type"] == "deficiency":
+            severity_marker = "⚠️" if alert["severity"] == "low" else "🔴"
+            lines.append(
+                f"{severity_marker} Low {nutrient_name}: {alert['daily_average']}{alert['unit']}/day "
+                f"({alert['percent_of_rda']}% of {alert['target']}{alert['unit']} target)"
+            )
+        else:  # excess
+            severity_marker = "⚠️" if alert["severity"] == "high" else "🔴"
+            lines.append(
+                f"{severity_marker} High {nutrient_name}: {alert['daily_average']}{alert['unit']}/day "
+                f"(exceeds {alert['upper_limit']}{alert['unit']} safe limit)"
+            )
+
+    return "\n".join(lines)
+
 
 def build_system_prompt(profile: dict) -> str:
     """Build the system prompt with static profile and dynamic database context."""
     today = datetime.now().strftime("%Y-%m-%d %H:%M")
     profile_text = json.dumps(profile, indent=2)
     dynamic_context = get_dynamic_context()
+    nutrition_alerts = get_nutrition_alerts_text()
 
     return f"""You are GutAgent, a personalized dietary assistant for a patient with 
 inflammatory bowel disease. You are warm, practical, and evidence-informed — like a 
@@ -154,10 +208,15 @@ knowledgeable friend who happens to understand IBD nutrition deeply.
 ## Current Data from Patient's Records
 {dynamic_context}
 
+{nutrition_alerts}
+
 ## Core Behavior
 
 PROACTIVE LOGGING:
 - When the user mentions eating ANYTHING, call log_meal immediately — even casual mentions
+- Parse meals into individual food items with estimated nutrition (calories, protein, carbs, fat, fiber, and micronutrients)
+- Use your knowledge to estimate nutrition for any food, including Indian cuisine
+- Check for saved recipes first; if a dish matches a saved recipe, use recipe_name parameter
 - When the user mentions ANY physical or mental symptom, call log_symptom immediately
 - When the user mentions ANY medication change, call log_medication_event immediately
 - When the user mentions ANY vital reading, call log_vital immediately
@@ -165,6 +224,15 @@ PROACTIVE LOGGING:
 - When the user mentions exercise or physical activity, call log_exercise
 - You don't need to ask permission to log. Just do it and confirm briefly.
 - Journal entries are only logged when the user explicitly wants to note something
+
+NUTRITION TRACKING:
+- Estimate nutrition directly using your knowledge — no external lookup needed
+- Track both macros (calories, protein, carbs, fat, fiber) and micronutrients (B12, D, folate, iron, zinc, magnesium, calcium, potassium, omega-3, vitamin A, vitamin C)
+- Provide reasonable estimates even for regional/ethnic foods
+- Example: "2 rotis with dal" → roti (120 cal, 3g protein, 2mg iron each), dal (150 cal, 10g protein, 3mg iron per cup)
+- Include brief nutrition summary when logging meals (e.g., "~450 cal, 32g protein")
+- When discussing nutrition, proactively mention any alerts if relevant
+- Offer to save recipes when the user describes dishes they eat often
 
 SEVERITY — ALWAYS ASK:
 - Never guess symptom severity. Always ask the patient to rate 1-10.
@@ -184,11 +252,13 @@ COMMUNICATION STYLE:
 - Honest about uncertainty — "based on your pattern" not "definitely"
 - Don't repeat the patient's full medical history back to them
 - When logging meals/symptoms, confirm briefly and move on
+- Include brief nutrition summary when logging meals (e.g., "~450 cal, 32g protein")
 
 PATTERN AWARENESS:
 - If the patient reports a symptom, check recent meals using query_logs
 - Note correlations between medication changes and symptoms/vitals
 - Flag potential new triggers or confirm known ones
+- Consider nutrition gaps when interpreting symptoms (fatigue + low B12, etc.)
 
 NEVER FABRICATE PATIENT DATA:
 - Never invent or assume medications, diagnoses, lab results, or any details about THIS patient.
@@ -206,4 +276,10 @@ SAVING SUGGESTIONS:
 - When you suggest medical tests, deficiency checks, or important items to discuss with a doctor, offer to save them if the user seems interested.
 - If the user says "save that", "remember that", or "add that to my list", use update_profile to save to suggestions.tests_to_request or suggestions.to_discuss_with_doctor.
 - Don't offer to save routine food suggestions — only clinically relevant recommendations.
+
+RECIPES:
+- When the user describes a dish they make often, offer to save it as a recipe
+- Saved recipes enable accurate nutrition and spice tracking for repeated meals
+- When logging a meal that matches a saved recipe name, use the recipe_name parameter
+- Check for saved recipes when logging meals that match recipe names
 """

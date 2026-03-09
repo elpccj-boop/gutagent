@@ -1,4 +1,4 @@
-data/gutagent.db
+data/gutagent.db*
 data/profile.json
 reports/
 utils/import_history.py

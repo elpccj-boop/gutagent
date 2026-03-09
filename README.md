@@ -6,9 +6,11 @@ A personalized dietary AI agent for managing inflammatory bowel disease. Built w
 
 - **Knows your medical profile** — conditions, triggers, medications, labs
 - **Logs everything naturally** — meals, symptoms, vitals, sleep, exercise, journal
+- **Tracks nutrition** — calories, protein, and 11 micronutrients for every meal
+- **Alerts on deficiencies and excesses** — warns when nutrients fall below recommended levels or exceed safe limits
 - **Finds patterns** — Claude interprets your data to identify correlations
 - **Remembers what matters** — save test suggestions, update your profile conversationally
-- **Tracks your health inputs** — food, sleep, exercise all in one place
+- **Saves recipes** — track nutrition consistently for dishes you eat often
 
 ## Quick Start
 
@@ -40,7 +42,8 @@ Just talk to it naturally:
 
 ```
 You: I had chicken with lettuce and tomato for lunch
-GutAgent: Logged that — chicken, lettuce, tomato for lunch. Good protein-focused choice!
+GutAgent: Logged lunch: chicken, lettuce, tomato (~380 cal, 35g protein). 
+         Good protein and vitamin C from the tomato!
 
 You: I'm feeling bloated, about a 5
 GutAgent: Logged bloating (severity 5). You had sev for breakfast — that's chickpea 
@@ -56,18 +59,31 @@ GutAgent: Nice! Logged your walk. That's your first exercise entry this week.
 You: My BP this morning was 128/82 pulse 68
 GutAgent: Logged — 128/82, HR 68. That's better than your readings last week.
 
-You: How am I doing?
-GutAgent: [Reviews all your recent data and gives you a summary with patterns]
+You: How's my nutrition lately?
+GutAgent: Over the last 3 days: averaging 1800 cal, 85g protein. You're a bit 
+         low on vitamin C (45% of target) — might want to add some citrus or 
+         bell peppers.
 
 You: Remember that I have hypohidrosis — I barely sweat
 GutAgent: Added to your profile under chronic conditions. I'll keep this in mind.
 
-You: Save that B12 test suggestion for my doctor
-GutAgent: Saved to your suggestions list for your next appointment.
+You: Save my dal tadka recipe — it's toor dal, tomatoes, onion, garlic, cumin, turmeric, ghee
+GutAgent: Saved "Dal Tadka" with 7 ingredients. Next time you have it, I'll use 
+         this for consistent nutrition tracking.
 
-You: --verbose
-Verbose mode: ON
+You: --haiku
+Model: Haiku
 ```
+
+## Commands
+
+| Command | Effect |
+|---------|--------|
+| `--haiku` | Use cheaper Haiku model (good for routine logging) |
+| `--sonnet` | Use Sonnet model (default, better analysis) |
+| `--verbose` | Show tool calls |
+| `--quiet` | Hide tool calls (default) |
+| `quit` | Exit |
 
 ## Project Structure
 
@@ -84,7 +100,7 @@ gutagent_project/
 │   │   └── models.py    # SQLite operations
 │   ├── prompts/
 │   │   └── system.py    # System prompt builder
-│   ├── rag/             # Phase 4: knowledge base (planned)
+│   ├── rag/             # Phase 7: knowledge base (planned)
 │   └── utils/
 │       ├── check_data.py    # Query DB from command line
 │       └── import_labs.py   # Bulk import lab results
@@ -99,7 +115,7 @@ gutagent_project/
 
 | Tool | What it does |
 |------|--------------|
-| `log_meal` | Log what you ate |
+| `log_meal` | Log what you ate with nutrition estimates |
 | `log_symptom` | Log symptoms with severity |
 | `log_vital` | Log BP, weight, temperature, etc. |
 | `log_medication_event` | Track medication starts, stops, changes |
@@ -110,6 +126,24 @@ gutagent_project/
 | `get_profile` | Retrieve your medical profile |
 | `correct_log` | Fix or delete logged entries |
 | `update_profile` | Add/update profile data conversationally |
+| `save_recipe` | Save a recipe with ingredients |
+| `get_recipe` | Retrieve a saved recipe |
+| `list_recipes` | List all saved recipes |
+| `delete_recipe` | Delete a recipe |
+| `get_nutrition_summary` | Get nutrition totals and averages |
+| `get_nutrition_alerts` | Get deficiency and excess alerts |
+
+## Nutrition Tracking
+
+Every meal is automatically tracked for:
+
+**Macros:** calories, protein, carbs, fat, fiber
+
+**Micronutrients:** B12, vitamin D, folate, iron, zinc, magnesium, calcium, potassium, omega-3, vitamin A, vitamin C
+
+Claude estimates nutrition directly — no external API needed. Works great for any cuisine including Indian food.
+
+**Alerts:** When your 3-day average falls below 70% of recommended daily intake or exceeds safe upper limits, you'll see a warning.
 
 ## Dynamic Context
 
@@ -117,30 +151,43 @@ At session start, Claude automatically sees:
 - Your full medication timeline
 - Latest lab results
 - Recent vitals (7 days)
-- Recent meals (3 days)
+- Recent meals (3 days) with nutrition
 - Recent symptoms (7 days)
 - Recent sleep (7 days)
 - Recent exercise (7 days)
 - Recent journal entries (7 days)
+- Saved recipes
+- Nutrition alerts
 
 No need to query — Claude already has context. Use `query_logs` for deeper searches or longer time ranges.
 
+## API Costs
+
+Rough estimates:
+- ~$0.02 per message (Sonnet)
+- ~$0.20 per day (10 messages)
+- ~$5 lasts about a month
+
+Use `--haiku` for routine logging to reduce costs by ~10x.
+
 ## Build Phases
 
-| Phase | Status | Description |
-|-------|--------|-------------|
+| Phase   | Status | Description |
+|---------|--------|-------------|
 | Phase 0 | ✅ Done | Python fundamentals, environment setup |
 | Phase 1 | ✅ Done | Core agent loop, tool calling, CLI |
 | Phase 2 | ✅ Done | Meal/symptom/vitals/meds logging, corrections |
 | Phase 3 | ✅ Done | Sleep/exercise/journal, profile updates, pattern interpretation |
-| Phase 4 | 🔲 Planned | RAG knowledge base with IBD research |
-| Phase 5 | 🔲 Planned | USDA nutrition API |
+| Phase 4 | ⏭️ Skipped | RAG knowledge base (deferred) |
+| Phase 5 | ✅ Done | Nutrition tracking with Claude estimates |
 | Phase 6 | 🔲 Planned | Web UI |
+| Phase 7 | 🔲 Planned | RAG for IBD research if needed |
 
 ## Design Philosophy
 
 - **No frameworks** — raw Claude API calls so you understand every step
 - **Claude interprets** — no complex analysis code; Claude reads your data and finds patterns
+- **Claude estimates nutrition** — no external API; works for any cuisine
 - **Profile + Database** — static facts in JSON, dynamic data in SQLite
 - **Dynamic context** — Claude sees recent data automatically, queries only for deeper dives
 - **Conversational** — just talk naturally, the agent figures out what to log

@@ -14,6 +14,7 @@ def run_agent(
     conversation_history: list,
     profile: dict,
     verbose: bool = False,
+    model: str = None,
 ) -> str:
     """
     Core agent loop:
@@ -29,6 +30,10 @@ def run_agent(
     
     system_prompt = build_system_prompt(profile)
     
+    # Use passed model or default from config
+    if model is None:
+        model = MODEL
+
     # Add the new user message
     conversation_history.append({
         "role": "user",
@@ -47,7 +52,7 @@ def run_agent(
         
         # Call Claude
         response = client.messages.create(
-            model=MODEL,
+            model=model,
             max_tokens=MAX_TOKENS,
             system=system_prompt,
             tools=TOOLS,

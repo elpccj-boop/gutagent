@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from gutagent.agent import run_agent
 from gutagent.profile import load_profile
 from gutagent.db.models import init_db
+from gutagent.config import MODEL, MODEL_HAIKU
 
 # Try to use rich for pretty output, fall back to plain text
 try:
@@ -26,8 +27,12 @@ def print_welcome_long():
         console.print(Panel(
   "[bold green]GutAgent[/bold green] — Your Personalized Dietary Assistant\n\n"
             "Tell me what you ate, how you're feeling, or ask for meal suggestions.\n"
-            "Type [bold]quit[/bold] or [bold]exit[/bold] to end the session.\n"
-            "Type [bold]--verbose[/bold] to toggle tool call visibility.\n\n"
+            "Type [bold]quit[/bold] or [bold]exit[/bold] to end the session.\n\n"
+            "[bold]Commands:[/bold]\n"
+            "  --verbose  Show tool calls\n"
+            "  --quiet    Hide tool calls (default)\n"
+            "  --haiku    Use Haiku (cheaper)\n"
+            "  --sonnet   Use Sonnet (default)\n\n"
             "[bold]Log data[/bold] — just tell me naturally:\n"
             "  'I had eggs and mutton for lunch'\n"
             "  'Feeling bloated, about a 6'\n"
@@ -50,7 +55,12 @@ def print_welcome_long():
         print("  Tell me what you ate, how you're feeling,")
         print("  or ask for meal suggestions.")
         print("  Type 'quit' or 'exit' to end.")
-        print("  Type '--verbose' to toggle tool visibility.")
+        print()
+        print("  Commands:")
+        print("    --verbose  Show tool calls")
+        print("    --quiet    Hide tool calls (default)")
+        print("    --haiku    Use Haiku (cheaper)")
+        print("    --sonnet   Use Sonnet (default)")
         print()
         print("  Log data — just tell me naturally:")
         print("    'I had eggs and mutton for lunch'")
@@ -67,9 +77,6 @@ def print_welcome_long():
         print("  Fix data:")
         print("    'Change that severity to 4'")
         print("    'Delete that last entry'")
-        print()
-        print("  Type 'quit' or 'exit' to end.")
-        print("  Type '--verbose' to toggle tool visibility.")
         print("=" * 60 + "\n")
 
 def print_welcome():
@@ -77,8 +84,8 @@ def print_welcome():
         console.print(Panel(
             "[bold green]GutAgent[/bold green] — Your Personalized Dietary Assistant\n\n"
             "Tell me what you ate, how you're feeling, or ask for meal suggestions.\n"
-            "Type [bold]quit[/bold] or [bold]exit[/bold] to end the session.\n"
-            "Type [bold]--verbose[/bold] to toggle tool call visibility.",
+            "Type [bold]quit[/bold] or [bold]exit[/bold] to end the session.\n\n"
+            "[bold]Commands:[/bold] --verbose, --quiet, --haiku, --sonnet",
             border_style="green",
         ))
     else:
@@ -88,7 +95,7 @@ def print_welcome():
         print("  Tell me what you ate, how you're feeling,")
         print("  or ask for meal suggestions.")
         print("  Type 'quit' or 'exit' to end.")
-        print("  Type '--verbose' to toggle tool visibility.")
+        print("  Commands: --verbose, --quiet, --haiku, --sonnet")
         print("=" * 60 + "\n")
 
 
@@ -113,7 +120,8 @@ def main():
     
     conversation_history = []
     verbose = False
-    
+    current_model = MODEL
+
     print_welcome()
     
     while True:
@@ -133,9 +141,26 @@ def main():
             print("Goodbye! Remember to eat well. 💚")
             break
         
+        # Verbose commands
         if user_input == "--verbose":
-            verbose = not verbose
-            print(f"Verbose mode: {'ON' if verbose else 'OFF'}")
+            verbose = True
+            print("Verbose: ON")
+            continue
+
+        if user_input == "--quiet":
+            verbose = False
+            print("Verbose: OFF")
+            continue
+
+        # Model commands
+        if user_input == "--haiku":
+            current_model = MODEL_HAIKU
+            print("Model: Haiku")
+            continue
+
+        if user_input == "--sonnet":
+            current_model = MODEL
+            print("Model: Sonnet")
             continue
         
         try:
@@ -144,6 +169,7 @@ def main():
                 conversation_history=conversation_history,
                 profile=profile,
                 verbose=verbose,
+                model=current_model,
             )
             
             if HAS_RICH:
@@ -157,6 +183,8 @@ def main():
             error_msg = str(e)
             if "api_key" in error_msg.lower() or "authentication" in error_msg.lower():
                 print("\n❌ API key not set. Run: export ANTHROPIC_API_KEY='your-key-here'\n")
+            elif "credit balance" in error_msg.lower():
+                print("\n❌ Out of API credits. Add credits or use --haiku for cheaper model.\n")
             else:
                 print(f"\n❌ Error: {error_msg}\n")
                 if verbose:

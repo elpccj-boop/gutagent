@@ -4,6 +4,7 @@ import os
 
 # Model config
 MODEL = "claude-sonnet-4-5-20250929"
+MODEL_HAIKU = "claude-haiku-3-5-20241022"
 MAX_TOKENS = 4096
 
 # API key — set via environment variable
@@ -19,8 +20,8 @@ TOOLS = [
         "name": "log_meal",
         "description": (
             "Log a meal the user has eaten. Call this proactively whenever the user "
-            "mentions eating something, even casually. Extract individual foods from "
-            "their natural language description."
+            "mentions eating something, even casually. Parse the meal into individual "
+            "food items and estimate nutrition for each item including micronutrients."
         ),
         "input_schema": {
             "type": "object",
@@ -34,10 +35,51 @@ TOOLS = [
                     "type": "string",
                     "description": "Natural language description of the meal"
                 },
-                "foods": {
+                "items": {
                     "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Individual foods/ingredients extracted from the description"
+                    "description": "Individual food items with estimated nutrition. Parse the meal into components.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Food name (e.g., 'roti', 'chicken curry', 'rice')"
+                            },
+                            "quantity": {
+                                "type": "number",
+                                "description": "Amount (e.g., 2 for '2 rotis', 150 for '150g chicken')"
+                            },
+                            "unit": {
+                                "type": "string",
+                                "description": "Unit of measure (piece, g, cup, tbsp, etc.). Default to 'piece' for countable items."
+                            },
+                            "calories": {"type": "number", "description": "Estimated calories"},
+                            "protein": {"type": "number", "description": "Protein in grams"},
+                            "carbs": {"type": "number", "description": "Carbohydrates in grams"},
+                            "fat": {"type": "number", "description": "Fat in grams"},
+                            "fiber": {"type": "number", "description": "Fiber in grams"},
+                            "vitamin_b12": {"type": "number", "description": "Vitamin B12 in μg"},
+                            "vitamin_d": {"type": "number", "description": "Vitamin D in μg"},
+                            "folate": {"type": "number", "description": "Folate in μg"},
+                            "iron": {"type": "number", "description": "Iron in mg"},
+                            "zinc": {"type": "number", "description": "Zinc in mg"},
+                            "magnesium": {"type": "number", "description": "Magnesium in mg"},
+                            "calcium": {"type": "number", "description": "Calcium in mg"},
+                            "potassium": {"type": "number", "description": "Potassium in mg"},
+                            "omega_3": {"type": "number", "description": "Omega-3 fatty acids in g"},
+                            "vitamin_a": {"type": "number", "description": "Vitamin A in μg"},
+                            "vitamin_c": {"type": "number", "description": "Vitamin C in mg"},
+                            "is_spice": {
+                                "type": "boolean",
+                                "description": "True if this is a spice (turmeric, cumin, etc.)"
+                            }
+                        },
+                        "required": ["name", "calories", "protein", "carbs", "fat"]
+                    }
+                },
+                "recipe_name": {
+                    "type": "string",
+                    "description": "If this matches a saved recipe, provide the recipe name to use its nutrition data."
                 },
                 "occurred_at": {
                     "type": "string",
@@ -49,7 +91,7 @@ TOOLS = [
                     )
                 },
             },
-            "required": ["description", "foods"]
+            "required": ["description", "items"]
         }
     },
     {
@@ -196,7 +238,7 @@ TOOLS = [
                         "recent_meals", "recent_symptoms", "food_search",
                         "symptom_search", "date_range", "recent_vitals",
                         "recent_meds", "recent_labs", "recent_sleep",
-                        "recent_exercise","recent_journal"
+                        "recent_exercise", "recent_journal"
                     ],
                     "description": "Type of query"
                 },
@@ -246,7 +288,7 @@ TOOLS = [
                 },
                 "updates": {
                     "type": "object",
-                    "description": "Fields to update with new values. Only for action=update. Use column names: severity, occurred_at, description, notes, symptom, meal_type, foods, systolic, diastolic, heart_rate, medication, event_type, dose, etc."
+                    "description": "Fields to update with new values. Only for action=update. Use column names: severity, occurred_at, description, notes, symptom, meal_type, systolic, diastolic, heart_rate, medication, event_type, dose, etc."
                 }
             },
             "required": ["action", "table", "entry_id"]
@@ -356,7 +398,7 @@ TOOLS = [
         "description": (
             "Log a freeform journal entry. Use when the user wants to note something "
             "that isn't a meal, symptom, vital, medication, sleep, or exercise — "
-            "life events, context, thoughts, or anything they want to record."
+            "life events, context, thoughts, plans, or anything they want to record."
         ),
         "input_schema": {
             "type": "object",
@@ -364,13 +406,128 @@ TOOLS = [
                 "description": {
                     "type": "string",
                     "description": "What the user wants to record"
-                },
-                "occurred_at": {
-                    "type": "string",
-                    "description": "When this happened, in YYYY-MM-DD HH:MM:SS format. Leave out if now."
                 }
             },
             "required": ["description"]
+        }
+    },
+    {
+        "name": "save_recipe",
+        "description": (
+            "Save a recipe for a dish the user makes often. Saved recipes enable accurate "
+            "nutrition and spice tracking. Use when the user describes ingredients for a dish."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the recipe (e.g., 'chicken curry', 'dal tadka')"
+                },
+                "ingredients": {
+                    "type": "array",
+                    "description": "List of ingredients with nutrition",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "quantity": {"type": "number"},
+                            "unit": {"type": "string"},
+                            "calories": {"type": "number"},
+                            "protein": {"type": "number"},
+                            "carbs": {"type": "number"},
+                            "fat": {"type": "number"},
+                            "fiber": {"type": "number"},
+                            "vitamin_b12": {"type": "number"},
+                            "vitamin_d": {"type": "number"},
+                            "folate": {"type": "number"},
+                            "iron": {"type": "number"},
+                            "zinc": {"type": "number"},
+                            "magnesium": {"type": "number"},
+                            "calcium": {"type": "number"},
+                            "potassium": {"type": "number"},
+                            "omega_3": {"type": "number"},
+                            "vitamin_a": {"type": "number"},
+                            "vitamin_c": {"type": "number"},
+                            "is_spice": {"type": "boolean"}
+                        },
+                        "required": ["name", "calories", "protein", "carbs", "fat"]
+                    }
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Any notes about the recipe"
+                }
+            },
+            "required": ["name", "ingredients"]
+        }
+    },
+    {
+        "name": "get_recipe",
+        "description": "Get a saved recipe by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the recipe to retrieve"
+                }
+            },
+            "required": ["name"]
+        }
+    },
+    {
+        "name": "list_recipes",
+        "description": "List all saved recipes.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "delete_recipe",
+        "description": "Delete a saved recipe.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the recipe to delete"
+                }
+            },
+            "required": ["name"]
+        }
+    },
+    {
+        "name": "get_nutrition_summary",
+        "description": (
+            "Get nutrition totals and daily averages for a time period. "
+            "Use when the user asks about their nutrition, calorie intake, protein, etc."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to summarize. Default 3."
+                }
+            }
+        }
+    },
+    {
+        "name": "get_nutrition_alerts",
+        "description": (
+            "Check for nutrient deficiencies based on RDA targets. "
+            "Returns alerts for nutrients below 70% of daily target."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to analyze. Default 3."
+                }
+            }
         }
     },
 ]
