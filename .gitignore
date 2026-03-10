@@ -1,6 +1,8 @@
 data/gutagent.db*
 data/profile.json
 reports/
+temp/
+docs/
 utils/import_history.py
 utils/import_labs.py
 .env

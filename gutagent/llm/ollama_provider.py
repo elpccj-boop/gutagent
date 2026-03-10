@@ -20,6 +20,28 @@ class OllamaProvider(BaseLLMProvider):
         except ImportError:
             raise ImportError("ollama package not installed. Run: pip install ollama")
     
+    def _fix_json_string_arguments(self, arguments: dict) -> dict:
+        """
+        Fix arguments where nested objects/arrays are JSON strings.
+        Ollama sometimes returns '["item"]' instead of ["item"].
+        """
+        fixed = {}
+        for key, value in arguments.items():
+            if isinstance(value, str):
+                # Try to parse JSON strings
+                if value.startswith('[') or value.startswith('{'):
+                    try:
+                        fixed[key] = json.loads(value)
+                    except json.JSONDecodeError:
+                        fixed[key] = value
+                elif value == 'null':
+                    fixed[key] = None
+                else:
+                    fixed[key] = value
+            else:
+                fixed[key] = value
+        return fixed
+
     def _convert_tools_to_ollama(self, tools: list) -> list:
         """Convert Anthropic tool format to Ollama format."""
         ollama_tools = []
@@ -100,23 +122,25 @@ class OllamaProvider(BaseLLMProvider):
         )
         
         # Convert response to standard format
+        # Ollama returns an object with attributes, not a dict
         content = []
-        message = response.get("message", {})
+        message = response.message
         
-        if message.get("content"):
-            content.append({"type": "text", "text": message["content"]})
+        if message.content:
+            content.append({"type": "text", "text": message.content})
         
-        if message.get("tool_calls"):
-            for i, tool_call in enumerate(message["tool_calls"]):
-                func = tool_call.get("function", {})
+        if message.tool_calls:
+            for i, tool_call in enumerate(message.tool_calls):
+                # Fix JSON string arguments
+                arguments = self._fix_json_string_arguments(tool_call.function.arguments)
                 content.append({
                     "type": "tool_use",
                     "id": f"tool_{i}",
-                    "name": func.get("name", ""),
-                    "input": func.get("arguments", {}),
+                    "name": tool_call.function.name,
+                    "input": arguments,
                 })
         
-        stop_reason = "tool_use" if message.get("tool_calls") else "end_turn"
+        stop_reason = "tool_use" if message.tool_calls else "end_turn"
         return LLMResponse(content=content, stop_reason=stop_reason)
     
     def chat_stream(
@@ -142,24 +166,25 @@ class OllamaProvider(BaseLLMProvider):
         tool_calls = []
         
         for chunk in stream:
-            message = chunk.get("message", {})
+            message = chunk.message
             
             # Text content
-            if message.get("content"):
-                collected_text += message["content"]
-                yield {"type": "text", "content": message["content"]}
+            if message.content:
+                collected_text += message.content
+                yield {"type": "text", "content": message.content}
             
             # Tool calls (usually come at the end, not streamed)
-            if message.get("tool_calls"):
-                for i, tool_call in enumerate(message["tool_calls"]):
-                    func = tool_call.get("function", {})
+            if message.tool_calls:
+                for i, tool_call in enumerate(message.tool_calls):
+                    # Fix JSON string arguments
+                    arguments = self._fix_json_string_arguments(tool_call.function.arguments)
                     tool_calls.append({
                         "type": "tool_use",
                         "id": f"tool_{i}",
-                        "name": func.get("name", ""),
-                        "input": func.get("arguments", {}),
+                        "name": tool_call.function.name,
+                        "input": arguments,
                     })
-                    yield {"type": "tool_start", "name": func.get("name", ""), "id": f"tool_{i}"}
+                    yield {"type": "tool_start", "name": tool_call.function.name, "id": f"tool_{i}"}
         
         # Build final content
         content = []

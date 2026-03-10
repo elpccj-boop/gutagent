@@ -1,4 +1,4 @@
-# GutAgent 🫚
+# GutAgent 🧬
 
 A personalized dietary AI agent for managing inflammatory bowel disease. Built with Claude's API and function calling — no frameworks, full control.
 
@@ -12,6 +12,7 @@ A personalized dietary AI agent for managing inflammatory bowel disease. Built w
 - **Remembers what matters** — save test suggestions, update your profile conversationally
 - **Saves recipes** — track nutrition consistently for dishes you eat often
 - **Works anywhere** — CLI for terminal, mobile-friendly web UI for on-the-go
+- **Multiple LLM providers** — Claude, Gemini, OpenAI, Groq, or local Ollama
 
 ## Quick Start
 
@@ -26,8 +27,9 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Set your API key
-export ANTHROPIC_API_KEY="your-key-here"
+# Set up your .env file (copy from example)
+cp .env.example .env
+# Edit .env with your API key and auth credentials
 
 # Edit your medical profile
 cp data/profile_template.json data/profile.json
@@ -40,6 +42,74 @@ python -m gutagent.run_cli
 python -m gutagent.run_web
 # Then open http://localhost:8000
 ```
+
+## LLM Providers
+
+GutAgent supports multiple LLM providers. Set `LLM_PROVIDER` in your `.env` file:
+
+| Provider | Status | Cost | Notes |
+|----------|--------|------|-------|
+| `claude` | ✅ Best | Paid (~$0.002-0.02/msg) | Best reasoning and tool calling |
+| `gemini` | ✅ Recommended | Free tier | Good quality, generous free tier |
+| `openai` | ✅ Works | Paid (~$0.002-0.02/msg) | Good quality |
+| `groq` | ⚠️ Limited | Free tier | May hit token limits with full system prompt |
+| `ollama` | ⚠️ Unreliable | Free (local) | Small models struggle with complex tool calling |
+
+### Setup by Provider
+
+**Gemini (Recommended free option):**
+```bash
+pip install google-genai
+# Get API key at https://makersuite.google.com/app/apikey
+# Add to .env:
+LLM_PROVIDER=gemini
+GOOGLE_API_KEY=your_key_here
+```
+
+**Claude:**
+```bash
+# Add to .env:
+LLM_PROVIDER=claude
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+```
+
+**OpenAI:**
+```bash
+pip install openai
+# Get API key at https://platform.openai.com/api-keys
+# Add to .env:
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-your-key-here
+```
+
+**Groq:**
+```bash
+pip install groq
+# Get API key at https://console.groq.com
+# Add to .env:
+LLM_PROVIDER=groq
+GROQ_API_KEY=gsk_your-key-here
+```
+
+**Ollama (local):**
+```bash
+pip install ollama
+ollama pull llama3.1:8b
+# Add to .env:
+LLM_PROVIDER=ollama
+```
+
+## Authentication
+
+For remote access (via Cloudflare tunnel), HTTP Basic Auth is enabled.
+
+Add to your `.env` file:
+```bash
+GUTAGENT_USERNAME=your_username
+GUTAGENT_PASSWORD=your_secure_password
+```
+
+The server shows `🔒 Auth enabled` on startup when credentials are configured.
 
 ## Usage
 
@@ -86,8 +156,8 @@ python -m gutagent.run_cli
 
 | Command | Effect |
 |---------|--------|
-| `--default` | Use default model (Haiku — cheaper, faster) |
-| `--smart` | Use smart model (Sonnet — better analysis) |
+| `--default` | Use Default model (faster, cheaper) |
+| `--smart` | Use Smart model (better reasoning) |
 | `--verbose` | Show tool calls |
 | `--quiet` | Hide tool calls (default) |
 | `quit` | Exit |
@@ -111,6 +181,20 @@ Opens at `http://localhost:8000`. Access from phone on same WiFi using the netwo
 - iOS Safari: Share → "Add to Home Screen"
 - Android Chrome: Menu → "Add to Home Screen"
 
+### Remote Access (Cloudflare Tunnel)
+
+Access from anywhere, not just home WiFi:
+
+```bash
+# Install cloudflared
+brew install cloudflared  # or see cloudflare docs for Linux
+
+# Start tunnel (gives you a public URL)
+cloudflared tunnel --url http://localhost:8000
+```
+
+For permanent setup, see `docs/SERVER_SETUP.md`.
+
 ## Project Structure
 
 ```
@@ -129,11 +213,13 @@ gutagent_project/
 │   │   ├── sw.js        # Service worker (offline)
 │   │   └── manifest.json # PWA config
 │   ├── llm/             # LLM provider abstraction
-│   │   ├── __init__.py  # get_provider() factory
-│   │   ├── base.py      # BaseLLMProvider interface
-│   │   ├── claude.py    # Claude/Anthropic provider
-│   │   ├── openai_provider.py  # OpenAI provider
-│   │   └── ollama_provider.py  # Ollama (local) provider
+│   │   ├── __init__.py  # Provider factory
+│   │   ├── base.py      # Base classes
+│   │   ├── claude.py    # Anthropic Claude
+│   │   ├── gemini_provider.py   # Google Gemini
+│   │   ├── openai_provider.py   # OpenAI
+│   │   ├── groq_provider.py     # Groq
+│   │   └── ollama_provider.py   # Ollama (local)
 │   ├── tools/
 │   │   └── registry.py  # Tool dispatch
 │   ├── db/
@@ -142,15 +228,20 @@ gutagent_project/
 │   │   └── system.py    # System prompt builder
 │   └── utils/
 │       └── check_data.py    # Query DB from command line
+├── tests/
 ├── data/
 │   ├── profile.json         # Your medical profile (gitignored)
 │   ├── profile_template.json
-│   └── gutagent.db          # SQLite database (auto-created, gitignored)
-├── requirements.txt
-├── ARCHITECTURE.md          # Detailed technical documentation
-├── README.md
+│   └── gutagent.db          # SQLite database (auto-created)
+├── docs/
+│   ├── MOBILE_ARCHITECTURE.md    # Mobile app planning doc
+│   └── SERVER_SETUP.md           # Linux server deployment guide
 ├── .gitignore
-└── .env                     # Auth credentials (gitignored)
+├── .env                      # Auth credentials + API keys (gitignored)
+├── .env.example              # Example env file for new users
+├── requirements.txt
+├── ARCHITECTURE.md           # Detailed technical documentation
+└── README.md
 ```
 
 ## Tools
@@ -183,13 +274,13 @@ Every meal is automatically tracked for:
 
 **Micronutrients:** B12, vitamin D, folate, iron, zinc, magnesium, calcium, potassium, omega-3, vitamin A, vitamin C
 
-Claude estimates nutrition directly — no external API needed. Works great for any cuisine including Indian food.
+The LLM estimates nutrition directly — no external API needed. Works great for any cuisine including Indian food.
 
 **Alerts:** When your 3-day average falls below 70% of recommended daily intake or exceeds safe upper limits, you'll see a warning.
 
 ## Dynamic Context
 
-At session start, Claude automatically sees:
+At session start, the LLM automatically sees:
 - Your full medication timeline
 - Latest lab results
 - Recent vitals (7 days)
@@ -201,62 +292,55 @@ At session start, Claude automatically sees:
 - Saved recipes
 - Nutrition alerts
 
-No need to query — Claude already has context. Use `query_logs` for deeper searches or longer time ranges.
+No need to query — the LLM already has context. Use `query_logs` for deeper searches or longer time ranges.
 
-## API Costs
+## Environment Variables
 
-Rough estimates:
-- **Default (Haiku):** ~$0.002 per message
-- **Smart (Sonnet):** ~$0.02 per message
+Create a `.env` file in the project root:
 
-Using Default for routine logging and Smart for analysis keeps costs low (~$1-2/month typical use).
+```bash
+# Authentication (required for remote access)
+GUTAGENT_USERNAME=your_username
+GUTAGENT_PASSWORD=your_secure_password
+
+# LLM Provider (choose one)
+LLM_PROVIDER=gemini  # or claude, openai, groq, ollama
+
+# API Keys (only need one, matching your provider)
+GOOGLE_API_KEY=your_gemini_key
+# ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
+# GROQ_API_KEY=gsk_...
+```
 
 ## Build Phases
 
-| Phase   | Status | Description |
-|---------|--------|-------------|
+| Phase | Status | Description |
+|-------|--------|-------------|
 | Phase 0 | ✅ Done | Python fundamentals, environment setup |
 | Phase 1 | ✅ Done | Core agent loop, tool calling, CLI |
 | Phase 2 | ✅ Done | Meal/symptom/vitals/meds logging, corrections |
 | Phase 3 | ✅ Done | Sleep/exercise/journal, profile updates, pattern interpretation |
 | Phase 4 | ⏭️ Skipped | RAG knowledge base (deferred) |
-| Phase 5 | ✅ Done | Nutrition tracking with Claude estimates |
+| Phase 5 | ✅ Done | Nutrition tracking with LLM estimates |
 | Phase 6 | ✅ Done | Web UI (FastAPI + React PWA) |
-| Phase 7 | 🔶 Partial | Auth (done), remote hosting (tunnel works, permanent URL pending) |
-| Phase 8 | 🔶 Partial | LLM abstraction (CLI done, web hardcoded to Claude) |
+| Phase 7 | 🔶 Partial | Auth ✅, Cloudflare tunnel ✅, permanent URL pending |
+| Phase 8 | 🔶 Partial | LLM abstraction (CLI ✅, web streaming hardcoded to Claude) |
 | Phase 9 | 🔲 Planned | Setup wizard for new users |
-
-## LLM Providers
-
-The CLI supports multiple LLM providers via an abstraction layer:
-
-| Provider | Models | Setup |
-|----------|--------|-------|
-| **Claude** (default) | Haiku, Sonnet | `export ANTHROPIC_API_KEY="..."` |
-| **OpenAI** | GPT-4o-mini, GPT-4o | `export LLM_PROVIDER=openai`<br>`export OPENAI_API_KEY="..."` |
-| **Ollama** (local) | llama3.1:8b, llama3.1:70b | `export LLM_PROVIDER=ollama`<br>Run Ollama locally |
-
-Model tiers (`--default` / `--smart`) map to appropriate models per provider.
-
-**Note:** Web UI currently hardcoded to Claude for streaming support. CLI supports all providers.
-
-## Authentication
-
-For remote access (via Cloudflare tunnel or hosting), add credentials to `.env`:
-
-```bash
-GUTAGENT_USERNAME=your_username
-GUTAGENT_PASSWORD=your_password
-```
-
-The server uses HTTP Basic Auth. If credentials aren't set, auth is disabled (for local development).
 
 ## Design Philosophy
 
-- **No frameworks** — raw Claude API calls so you understand every step
-- **Claude interprets** — no complex analysis code; Claude reads your data and finds patterns
-- **Claude estimates nutrition** — no external API; works for any cuisine
+- **No frameworks** — raw LLM API calls so you understand every step
+- **LLM interprets** — no complex analysis code; the LLM reads your data and finds patterns
+- **LLM estimates nutrition** — no external API; works for any cuisine
 - **Profile + Database** — static facts in JSON, dynamic data in SQLite
-- **Dynamic context** — Claude sees recent data automatically, queries only for deeper dives
+- **Dynamic context** — LLM sees recent data automatically, queries only for deeper dives
 - **Two interfaces, one agent** — CLI and web UI share the same core logic
 - **Conversational** — just talk naturally, the agent figures out what to log
+- **Provider agnostic** — switch between Claude, Gemini, OpenAI, etc.
+
+## Related Docs
+
+- `ARCHITECTURE.md` — Detailed technical documentation
+- `SERVER_SETUP.md` — Linux server deployment guide
+- `MOBILE_ARCHITECTURE.md` — Mobile app planning and options

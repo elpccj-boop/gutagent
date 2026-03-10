@@ -21,6 +21,14 @@ MODELS = {
         "default": "llama3.1:8b",
         "smart": "llama3.1:70b",
     },
+    "groq": {
+        "default": "llama-3.1-8b-instant",      # Fast, free tier friendly
+        "smart": "llama-3.1-70b-versatile",     # Better reasoning
+    },
+    "gemini": {
+        "default": "gemini-2.5-flash",              # Fast, free tier friendly
+        "smart": "gemini-2.5-pro",                  # Better reasoning
+    },
 }
 
 def get_model_for_tier(tier: str = "default", provider: str = None) -> str:
