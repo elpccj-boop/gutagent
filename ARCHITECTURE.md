@@ -25,10 +25,10 @@ An AI agent that:
 │  ┌─────────────────┐      ┌──────────────────────────┐  │
 │  │   CLI (run_cli) │      │   Web UI (run_web)       │  │
 │  │   rich + prompt │      │   FastAPI + React PWA    │  │
-│  │   --haiku       │      │   Streaming responses    │  │
-│  │   --sonnet      │      │   Mobile-first           │  │
+│  │   --default     │      │   Streaming responses    │  │
+│  │   --smart       │      │   Mobile-first           │  │
 │  │   --verbose     │      │   Installable (PWA)      │  │
-│  │   --quiet       │      │   Settings panel         │  │
+│  │   --quiet       │      │   HTTP Basic Auth        │  │
 │  └────────┬────────┘      └────────────┬─────────────┘  │
 │           │                            │                │
 │           └──────────┬─────────────────┘                │
@@ -113,7 +113,8 @@ An AI agent that:
 | Component | Choice | Why |
 |-----------|--------|-----|
 | Language | Python 3.13 | Best AI ecosystem |
-| LLM | Claude API (Haiku default, Sonnet for analysis) | Reasoning, function calling, empathetic tone |
+| LLM | Claude API (Default=Haiku, Smart=Sonnet) | Reasoning, function calling, empathetic tone |
+| LLM Abstraction | Provider layer in `llm/` | CLI supports Claude, OpenAI, Ollama |
 | Database | SQLite (WAL mode) | Zero setup, file-based, perfect for personal tools |
 | CLI | `rich` + `prompt_toolkit` | Beautiful terminal UI |
 | Web Backend | FastAPI + SSE streaming | Lightweight, async, real-time responses |
@@ -121,13 +122,15 @@ An AI agent that:
 | PWA | Service worker + manifest | Installable on phone, offline app shell |
 | Profile | JSON file | Static medical data, injected into system prompt |
 | Nutrition | Claude estimates | No external API — Claude knows food nutrition |
+| Auth | HTTP Basic Auth | Username/password via `.env` file |
+| Remote Access | Cloudflare Tunnel | Free, no static IP needed |
 
-### Future additions (not yet built)
-| Component | Choice | Purpose |
-|-----------|--------|---------|
-| Hosting | Fly.io / Railway / VPS | Access from anywhere |
-| Auth | Simple username/password | Secure remote access |
-| Vector DB | ChromaDB | RAG over IBD dietary research (if needed) |
+### Current limitations
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Web streaming | Claude only | LLM abstraction not yet implemented for web |
+| Hosting | Tunnel only | Permanent URL requires purchased domain |
+| Vector DB | Not built | RAG over IBD research deferred |
 
 ---
 
@@ -137,6 +140,7 @@ An AI agent that:
 gutagent_project/
 ├── .gitignore
 ├── requirements.txt
+├── .env                          # Auth credentials (gitignored)
 ├── data/
 │   ├── gutagent.db*              # SQLite database (all dynamic data)
 │   ├── profile.json              # Static medical profile (gitignored)
@@ -150,12 +154,18 @@ gutagent_project/
 │   ├── profile.py                # Profile loading/saving
 │   ├── api/
 │   │   ├── __init__.py
-│   │   └── server.py             # FastAPI app + streaming endpoint
+│   │   └── server.py             # FastAPI app + streaming endpoint + auth
 │   ├── web/
 │   │   ├── index.html            # Entry HTML + styles
 │   │   ├── app.jsx               # React chat UI
 │   │   ├── sw.js                 # Service worker (offline caching)
 │   │   └── manifest.json         # PWA manifest
+│   ├── llm/                      # LLM provider abstraction
+│   │   ├── __init__.py           # get_provider() factory
+│   │   ├── base.py               # BaseLLMProvider interface
+│   │   ├── claude.py             # Claude/Anthropic provider
+│   │   ├── openai_provider.py    # OpenAI provider
+│   │   └── ollama_provider.py    # Ollama (local) provider
 │   ├── tools/
 │   │   ├── __init__.py
 │   │   └── registry.py           # All tool handlers + dispatch
@@ -212,11 +222,23 @@ python -m gutagent.run_cli
 
 | Command | Effect |
 |---------|--------|
-| `--haiku` | Switch to Haiku model (default) |
-| `--sonnet` | Switch to Sonnet model (better analysis) |
+| `--default` | Use default model (Haiku — faster, cheaper) |
+| `--smart` | Use smart model (Sonnet — better analysis) |
 | `--verbose` | Show tool calls |
 | `--quiet` | Hide tool calls (default) |
 | `quit` / `exit` | End session |
+
+To use a different LLM provider:
+```bash
+# OpenAI
+export LLM_PROVIDER=openai
+export OPENAI_API_KEY="sk-..."
+python -m gutagent.run_cli
+
+# Ollama (local)
+export LLM_PROVIDER=ollama
+python -m gutagent.run_cli
+```
 
 ### Web
 ```bash
@@ -227,11 +249,35 @@ Opens at `http://localhost:8000`. Access from phone on same WiFi via the network
 
 | Feature | Description |
 |---------|-------------|
-| Model toggle | Switch Haiku/Sonnet in settings |
+| Model toggle | Switch Default/Smart in settings |
 | Show tools | Toggle tool call visibility in settings |
 | Clear conversation | Reset chat history |
 | Quick actions | Pre-filled prompts for common logging |
 | PWA install | Add to home screen on mobile |
+
+### Authentication
+
+For remote access, create a `.env` file:
+```bash
+GUTAGENT_USERNAME=your_username
+GUTAGENT_PASSWORD=your_password
+```
+
+Server shows `🔒 Auth enabled` on startup when credentials are set. Auth is disabled if not set (for local development).
+
+### Remote Access (Cloudflare Tunnel)
+
+```bash
+# Install cloudflared (macOS)
+brew install cloudflared
+
+# Start tunnel (in separate terminal)
+cloudflared tunnel --url http://localhost:8000
+
+# Use the generated URL from phone/anywhere
+```
+
+The tunnel URL changes each restart (free tier). For a permanent URL, purchase a domain and configure Cloudflare.
 
 ---
 
@@ -244,6 +290,7 @@ FastAPI server with:
 - `POST /api/clear` — Clear session history
 - `GET /api/context` — Get current dynamic context
 - `GET /api/profile` — Get user profile
+- HTTP Basic Auth on all endpoints (if credentials configured)
 - Static file serving for web UI
 
 Session history stored in-memory (resets on server restart).
@@ -700,17 +747,18 @@ python -m gutagent.utils.check_data vitals --days 7    # last 7 days
 | Phase 4 | ⏭️ Skipped | RAG knowledge base (deferred — Claude's knowledge + web search sufficient) |
 | Phase 5 | ✅ Done | Nutrition tracking (Claude estimates, no external API) |
 | Phase 6 | ✅ Done | Web UI (FastAPI + React PWA, streaming, mobile-first) |
-| Phase 7 | 🔲 Planned | Hosting + authentication |
-| Phase 8 | 🔲 Planned | Setup wizard for new users |
-| Phase 9 | 🔲 Planned | Profile restructure + insights storage |
+| Phase 7 | 🔶 Partial | Auth (done), remote hosting (Cloudflare tunnel works, permanent URL pending) |
+| Phase 8 | 🔶 Partial | LLM abstraction (CLI supports Claude/OpenAI/Ollama, web hardcoded to Claude) |
+| Phase 9 | 🔲 Planned | Setup wizard for new users |
+| Phase 10 | 🔲 Planned | Profile restructure + insights storage |
 
 ---
 
 ## API Costs
 
 Rough estimates:
-- **Haiku (default):** ~$0.002 per message exchange
-- **Sonnet:** ~$0.02 per message exchange
+- **Default (Haiku):** ~$0.002 per message exchange
+- **Smart (Sonnet):** ~$0.02 per message exchange
 
 Using Haiku for routine logging and Sonnet for analysis keeps costs low (~$1-2/month for typical use).
 

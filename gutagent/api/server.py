@@ -1,30 +1,57 @@
 """FastAPI server for GutAgent web UI."""
 
 import json
-import asyncio
+import os
+import secrets
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Request
+from dotenv import load_dotenv
+load_dotenv()  # Load .env file
+
+from fastapi import FastAPI, Request, Depends, HTTPException, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
-import anthropic
-
-from gutagent.config import TOOLS, MODEL, MODEL_SONNET, MAX_TOKENS
+from gutagent.config import TOOLS, MAX_TOKENS, LLM_PROVIDER, get_model_for_tier
 from gutagent.profile import load_profile
 from gutagent.db.models import init_db
 from gutagent.prompts.system import build_system_prompt
 from gutagent.tools.registry import execute_tool
+from gutagent.llm import get_provider
 
 
 # Initialize
 init_db()
-client = anthropic.Anthropic()
 
 app = FastAPI(title="GutAgent")
+
+# Security
+security = HTTPBasic()
+
+# Load credentials from environment
+AUTH_USERNAME = os.getenv("GUTAGENT_USERNAME", "")
+AUTH_PASSWORD = os.getenv("GUTAGENT_PASSWORD", "")
+
+def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
+    """Verify username and password."""
+    # If no credentials configured, skip auth (local development)
+    if not AUTH_USERNAME or not AUTH_PASSWORD:
+        return True
+
+    username_correct = secrets.compare_digest(credentials.username, AUTH_USERNAME)
+    password_correct = secrets.compare_digest(credentials.password, AUTH_PASSWORD)
+
+    if not (username_correct and password_correct):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return True
 
 # CORS for local development
 app.add_middleware(
@@ -43,13 +70,13 @@ sessions: dict[str, list] = {}
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
-    model: str = "haiku"  # "sonnet" or "haiku"
+    model: str = "default"  # "default" (fast/cheap) or "smart" (capable)
     show_tools: bool = False
 
 
-def get_model(model_name: str) -> str:
-    """Get model string from friendly name."""
-    return MODEL_SONNET if model_name == "sonnet" else MODEL
+def get_model(tier: str) -> str:
+    """Get model string for the current provider and tier."""
+    return get_model_for_tier(tier)
 
 
 async def run_agent_streaming(
@@ -63,8 +90,11 @@ async def run_agent_streaming(
     Streaming version of the agent loop.
     Yields Server-Sent Events as Claude generates responses.
     """
+    import anthropic
+    client = anthropic.Anthropic()
+
     system_prompt = build_system_prompt(profile)
-    
+
     # Add user message to history
     conversation_history.append({
         "role": "user",
@@ -81,7 +111,7 @@ async def run_agent_streaming(
         collected_content = []
         current_text = ""
         tool_uses = []
-        
+
         with client.messages.stream(
             model=model,
             max_tokens=MAX_TOKENS,
@@ -101,7 +131,7 @@ async def run_agent_streaming(
                         })
                         if show_tools:
                             yield f"data: {json.dumps({'type': 'tool_start', 'name': event.content_block.name})}\n\n"
-                
+
                 elif event.type == "content_block_delta":
                     if event.delta.type == "text_delta":
                         current_text += event.delta.text
@@ -111,14 +141,14 @@ async def run_agent_streaming(
                         # Accumulate tool input JSON
                         if tool_uses:
                             tool_uses[-1]["input"] += event.delta.partial_json
-                
+
                 elif event.type == "content_block_stop":
                     if current_text:
                         collected_content.append({"type": "text", "text": current_text})
                         current_text = ""
         
-        # Get final message for stop reason
-        final_message = stream.get_final_message()
+            # Get final message for stop reason
+            final_message = stream.get_final_message()
         
         if final_message.stop_reason == "tool_use":
             # Build content list with tool uses
@@ -133,7 +163,7 @@ async def run_agent_streaming(
                         "name": block.name,
                         "input": block.input,
                     })
-            
+
             conversation_history.append({
                 "role": "assistant",
                 "content": assistant_content,
@@ -145,14 +175,14 @@ async def run_agent_streaming(
                 if block.type == "tool_use":
                     if show_tools:
                         yield f"data: {json.dumps({'type': 'tool_call', 'name': block.name, 'input': block.input})}\n\n"
-                    
+
                     result = execute_tool(block.name, block.input)
-                    
+
                     if show_tools:
                         # Truncate for display
                         display_result = result[:300] + "..." if len(result) > 300 else result
                         yield f"data: {json.dumps({'type': 'tool_result', 'name': block.name, 'result': display_result})}\n\n"
-                    
+
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -172,7 +202,7 @@ async def run_agent_streaming(
             for block in final_message.content:
                 if hasattr(block, "text"):
                     text_parts.append(block.text)
-            
+
             assistant_message = "\n".join(text_parts)
             conversation_history.append({
                 "role": "assistant",
@@ -188,7 +218,7 @@ async def run_agent_streaming(
 
 
 @app.post("/api/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, authenticated: bool = Depends(verify_credentials)):
     """Stream a chat response."""
     profile = load_profile()
     
@@ -216,7 +246,7 @@ async def chat(request: ChatRequest):
 
 
 @app.post("/api/clear")
-async def clear_session(request: Request):
+async def clear_session(request: Request, authenticated: bool = Depends(verify_credentials)):
     """Clear conversation history for a session."""
     data = await request.json()
     session_id = data.get("session_id", "default")
@@ -226,7 +256,7 @@ async def clear_session(request: Request):
 
 
 @app.get("/api/context")
-async def get_context():
+async def get_context(authenticated: bool = Depends(verify_credentials)):
     """Get current dynamic context (recent data)."""
     from gutagent.prompts.system import get_dynamic_context, get_nutrition_alerts_text
     
@@ -237,7 +267,7 @@ async def get_context():
 
 
 @app.get("/api/profile")
-async def get_profile():
+async def get_profile(authenticated: bool = Depends(verify_credentials)):
     """Get the user profile."""
     return load_profile()
 
@@ -251,7 +281,11 @@ if web_dir.exists():
 def main():
     """Run the server."""
     import uvicorn
+
+    auth_status = "🔒 Auth enabled" if AUTH_USERNAME and AUTH_PASSWORD else "⚠️  No auth (set GUTAGENT_USERNAME and GUTAGENT_PASSWORD)"
+
     print("\n🥗 GutAgent Web UI")
+    print(f"   {auth_status}")
     print("   Local:   http://localhost:8000")
     print("   Network: http://<your-ip>:8000")
     print("\n   Press Ctrl+C to stop\n")

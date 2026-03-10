@@ -9,13 +9,16 @@ Usage:
 import sys
 import os
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gutagent.agent import run_agent
 from gutagent.profile import load_profile
 from gutagent.db.models import init_db
-from gutagent.config import MODEL_HAIKU, MODEL_SONNET, MODEL
+from gutagent.config import get_model_for_tier, LLM_PROVIDER
 
 # Try to use rich for pretty output, fall back to plain text
 try:
@@ -36,8 +39,8 @@ def print_welcome_long():
             "[bold]Commands:[/bold]\n"
             "  --verbose  Show tool calls\n"
             "  --quiet    Hide tool calls (default)\n"
-            "  --haiku    Use Haiku (cheaper)\n"
-            "  --sonnet   Use Sonnet (default)\n\n"
+            "  --default  Use Default model (faster)\n"
+            "  --smart    Use Smart model (better)\n\n"
             "[bold]Log data[/bold] — just tell me naturally:\n"
             "  'I had eggs and mutton for lunch'\n"
             "  'Feeling bloated, about a 6'\n"
@@ -64,8 +67,8 @@ def print_welcome_long():
         print("  Commands:")
         print("    --verbose  Show tool calls")
         print("    --quiet    Hide tool calls (default)")
-        print("    --haiku    Use Haiku (cheaper)")
-        print("    --sonnet   Use Sonnet (default)")
+        print("    --default  Use Default model (faster)")
+        print("    --smart    Use Smart model (better)")
         print()
         print("  Log data — just tell me naturally:")
         print("    'I had eggs and mutton for lunch'")
@@ -90,7 +93,7 @@ def print_welcome():
             "[bold green]GutAgent[/bold green] — Your Personalized Dietary Assistant\n\n"
             "Tell me what you ate, how you're feeling, or ask for meal suggestions.\n"
             "Type [bold]quit[/bold] or [bold]exit[/bold] to end the session.\n\n"
-            "[bold]Commands:[/bold] --verbose, --quiet, --haiku, --sonnet",
+            "[bold]Commands:[/bold] --verbose, --quiet, --default, --smart",
             border_style="green",
         ))
     else:
@@ -100,7 +103,7 @@ def print_welcome():
         print("  Tell me what you ate, how you're feeling,")
         print("  or ask for meal suggestions.")
         print("  Type 'quit' or 'exit' to end.")
-        print("  Commands: --verbose, --quiet, --haiku, --sonnet")
+        print("  Commands: --verbose, --quiet, --default, --smart")
         print("=" * 60 + "\n")
 
 
@@ -125,10 +128,11 @@ def main():
     
     conversation_history = []
     verbose = False
-    current_model = MODEL
+    current_tier = "default"  # "default" or "smart"
 
     print_welcome()
-    
+    print(f"  Provider: {LLM_PROVIDER} | Model: {get_model_for_tier(current_tier)}\n")
+
     while True:
         try:
             if HAS_RICH:
@@ -157,15 +161,15 @@ def main():
             print("Verbose: OFF")
             continue
 
-        # Model commands
-        if user_input == "--haiku":
-            current_model = MODEL_HAIKU
-            print("Model: Haiku")
+        # Model tier commands
+        if user_input == "--default":
+            current_tier = "default"
+            print(f"Model: {get_model_for_tier(current_tier)}")
             continue
 
-        if user_input == "--sonnet":
-            current_model = MODEL_SONNET
-            print("Model: Sonnet")
+        if user_input == "--smart":
+            current_tier = "smart"
+            print(f"Model: {get_model_for_tier(current_tier)}")
             continue
         
         try:
@@ -174,7 +178,7 @@ def main():
                 conversation_history=conversation_history,
                 profile=profile,
                 verbose=verbose,
-                model=current_model,
+                model=get_model_for_tier(current_tier),
             )
             
             if HAS_RICH:
@@ -187,9 +191,9 @@ def main():
         except Exception as e:
             error_msg = str(e)
             if "api_key" in error_msg.lower() or "authentication" in error_msg.lower():
-                print("\n❌ API key not set. Run: export ANTHROPIC_API_KEY='your-key-here'\n")
+                print(f"\n❌ API key not set. Run: export {LLM_PROVIDER.upper()}_API_KEY='your-key-here'\n")
             elif "credit balance" in error_msg.lower():
-                print("\n❌ Out of API credits. Add credits.\n")
+                print("\n❌ Out of API credits. Add credits or use --default for cheaper model.\n")
             else:
                 print(f"\n❌ Error: {error_msg}\n")
                 if verbose:

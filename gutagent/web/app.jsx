@@ -90,25 +90,25 @@ function SettingsPanel({ isOpen, onClose, settings, onSettingsChange }) {
                         <div className="flex rounded-lg overflow-hidden border border-gray-200">
                             <button
                                 className={`flex-1 py-2.5 text-sm font-medium transition ${
-                                    settings.model === 'sonnet' 
+                                    settings.model === 'smart' 
                                         ? 'bg-gut-600 text-white' 
                                         : 'bg-white text-gray-600 hover:bg-gray-50'
                                 }`}
-                                onClick={() => onSettingsChange({ ...settings, model: 'sonnet' })}
+                                onClick={() => onSettingsChange({ ...settings, model: 'smart' })}
                             >
-                                Sonnet
+                                Smart
                                 <span className="block text-xs opacity-75">Better</span>
                             </button>
                             <button
                                 className={`flex-1 py-2.5 text-sm font-medium transition ${
-                                    settings.model === 'haiku' 
+                                    settings.model === 'default' 
                                         ? 'bg-gut-600 text-white' 
                                         : 'bg-white text-gray-600 hover:bg-gray-50'
                                 }`}
-                                onClick={() => onSettingsChange({ ...settings, model: 'haiku' })}
+                                onClick={() => onSettingsChange({ ...settings, model: 'default' })}
                             >
-                                Haiku
-                                <span className="block text-xs opacity-75">Cheaper</span>
+                                Default
+                                <span className="block text-xs opacity-75">Faster</span>
                             </button>
                         </div>
                     </div>
@@ -193,7 +193,7 @@ function App() {
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [settings, setSettings] = useState(() => {
         const saved = localStorage.getItem('gutagent_settings');
-        return saved ? JSON.parse(saved) : { model: 'haiku', showTools: false };
+        return saved ? JSON.parse(saved) : { model: 'default', showTools: false };
     });
     
     const messagesEndRef = useRef(null);
@@ -209,6 +209,24 @@ function App() {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
     
+    // Autofocus input on load and after sending
+    useEffect(() => {
+        inputRef.current?.focus();
+    }, []);
+
+    // Check auth on mount — this triggers browser login prompt if needed
+    useEffect(() => {
+        fetch('/api/profile', { credentials: 'include' })
+            .then(res => {
+                if (res.status === 401) {
+                    // This shouldn't normally happen since browser will show login
+                    // But just in case, show an error
+                    setMessages([{ role: 'error', content: 'Authentication required. Please refresh and log in.' }]);
+                }
+            })
+            .catch(() => {});
+    }, []);
+
     // Load stored messages on mount
     useEffect(() => {
         const stored = localStorage.getItem('gutagent_messages');
@@ -243,6 +261,7 @@ function App() {
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
                 body: JSON.stringify({
                     message: text,
                     session_id: SESSION_ID,
@@ -251,6 +270,12 @@ function App() {
                 }),
             });
             
+            if (response.status === 401) {
+                // Auth required — reload to trigger browser login prompt
+                window.location.reload();
+                return;
+            }
+
             if (!response.ok) throw new Error('Network error');
             
             const reader = response.body.getReader();
@@ -338,7 +363,7 @@ function App() {
                     <div>
                         <h1 className="font-semibold text-lg leading-tight">GutAgent</h1>
                         <p className="text-xs text-gut-200">
-                            {settings.model === 'haiku' ? 'Haiku' : 'Sonnet'}
+                            {settings.model === 'smart' ? 'Smart' : 'Default'}
                         </p>
                     </div>
                 </div>

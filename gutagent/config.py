@@ -2,14 +2,47 @@
 
 import os
 
-# Model config
-MODEL_HAIKU = "claude-haiku-4-5-20251001"
-MODEL_SONNET = "claude-sonnet-4-5-20250929"
-MODEL = MODEL_HAIKU # Default
+# LLM Provider config
+# Options: "claude", "openai", "ollama"
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "claude")
+
+# Model config per provider
+# "default" = fast/cheap, "smart" = capable/expensive
+MODELS = {
+    "claude": {
+        "default": "claude-haiku-4-5-20251001",
+        "smart": "claude-sonnet-4-5-20250929",
+    },
+    "openai": {
+        "default": "gpt-4o-mini",
+        "smart": "gpt-4o",
+    },
+    "ollama": {
+        "default": "llama3.1:8b",
+        "smart": "llama3.1:70b",
+    },
+}
+
+def get_model_for_tier(tier: str = "default", provider: str = None) -> str:
+    """
+    Get the model name for a given tier and provider.
+
+    Args:
+        tier: "default" (fast/cheap) or "smart" (capable/expensive)
+        provider: "claude", "openai", "ollama" (defaults to LLM_PROVIDER)
+
+    Returns:
+        Model name string
+    """
+    provider = provider or LLM_PROVIDER
+    return MODELS.get(provider, MODELS["claude"]).get(tier, MODELS[provider]["default"])
+
+
 MAX_TOKENS = 4096
 
-# API key — set via environment variable
+# API keys — set via environment variables
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Database
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "gutagent.db")

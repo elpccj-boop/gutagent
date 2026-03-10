@@ -86,8 +86,8 @@ python -m gutagent.run_cli
 
 | Command | Effect |
 |---------|--------|
-| `--haiku` | Use Haiku model (default, cheaper) |
-| `--sonnet` | Use Sonnet model (better analysis) |
+| `--default` | Use default model (Haiku — cheaper, faster) |
+| `--smart` | Use smart model (Sonnet — better analysis) |
 | `--verbose` | Show tool calls |
 | `--quiet` | Hide tool calls (default) |
 | `quit` | Exit |
@@ -102,7 +102,7 @@ Opens at `http://localhost:8000`. Access from phone on same WiFi using the netwo
 | Feature | Description |
 |---------|-------------|
 | Streaming | Responses appear word-by-word |
-| Model toggle | Switch Haiku/Sonnet in settings |
+| Model toggle | Switch Default/Smart in settings |
 | Show tools | Toggle tool call visibility |
 | Quick actions | One-tap buttons for common logging |
 | PWA install | Add to home screen on mobile |
@@ -128,6 +128,12 @@ gutagent_project/
 │   │   ├── app.jsx      # React chat interface
 │   │   ├── sw.js        # Service worker (offline)
 │   │   └── manifest.json # PWA config
+│   ├── llm/             # LLM provider abstraction
+│   │   ├── __init__.py  # get_provider() factory
+│   │   ├── base.py      # BaseLLMProvider interface
+│   │   ├── claude.py    # Claude/Anthropic provider
+│   │   ├── openai_provider.py  # OpenAI provider
+│   │   └── ollama_provider.py  # Ollama (local) provider
 │   ├── tools/
 │   │   └── registry.py  # Tool dispatch
 │   ├── db/
@@ -143,7 +149,8 @@ gutagent_project/
 ├── requirements.txt
 ├── ARCHITECTURE.md          # Detailed technical documentation
 ├── README.md
-└── .gitignore
+├── .gitignore
+└── .env                     # Auth credentials (gitignored)
 ```
 
 ## Tools
@@ -199,10 +206,10 @@ No need to query — Claude already has context. Use `query_logs` for deeper sea
 ## API Costs
 
 Rough estimates:
-- **Haiku (default):** ~$0.002 per message
-- **Sonnet:** ~$0.02 per message
+- **Default (Haiku):** ~$0.002 per message
+- **Smart (Sonnet):** ~$0.02 per message
 
-Using Haiku for routine logging and Sonnet for analysis keeps costs low (~$1-2/month typical use).
+Using Default for routine logging and Smart for analysis keeps costs low (~$1-2/month typical use).
 
 ## Build Phases
 
@@ -215,8 +222,34 @@ Using Haiku for routine logging and Sonnet for analysis keeps costs low (~$1-2/m
 | Phase 4 | ⏭️ Skipped | RAG knowledge base (deferred) |
 | Phase 5 | ✅ Done | Nutrition tracking with Claude estimates |
 | Phase 6 | ✅ Done | Web UI (FastAPI + React PWA) |
-| Phase 7 | 🔲 Planned | Hosting + authentication |
-| Phase 8 | 🔲 Planned | Setup wizard for new users |
+| Phase 7 | 🔶 Partial | Auth (done), remote hosting (tunnel works, permanent URL pending) |
+| Phase 8 | 🔶 Partial | LLM abstraction (CLI done, web hardcoded to Claude) |
+| Phase 9 | 🔲 Planned | Setup wizard for new users |
+
+## LLM Providers
+
+The CLI supports multiple LLM providers via an abstraction layer:
+
+| Provider | Models | Setup |
+|----------|--------|-------|
+| **Claude** (default) | Haiku, Sonnet | `export ANTHROPIC_API_KEY="..."` |
+| **OpenAI** | GPT-4o-mini, GPT-4o | `export LLM_PROVIDER=openai`<br>`export OPENAI_API_KEY="..."` |
+| **Ollama** (local) | llama3.1:8b, llama3.1:70b | `export LLM_PROVIDER=ollama`<br>Run Ollama locally |
+
+Model tiers (`--default` / `--smart`) map to appropriate models per provider.
+
+**Note:** Web UI currently hardcoded to Claude for streaming support. CLI supports all providers.
+
+## Authentication
+
+For remote access (via Cloudflare tunnel or hosting), add credentials to `.env`:
+
+```bash
+GUTAGENT_USERNAME=your_username
+GUTAGENT_PASSWORD=your_password
+```
+
+The server uses HTTP Basic Auth. If credentials aren't set, auth is disabled (for local development).
 
 ## Design Philosophy
 
