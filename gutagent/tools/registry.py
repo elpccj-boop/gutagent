@@ -28,6 +28,7 @@ from gutagent.db.models import (
     delete_recipe,
     get_nutrition_summary,
     get_nutrition_alerts,
+    get_logs_by_date,
 )
 
 from gutagent.profile import load_profile, update_profile
@@ -218,6 +219,15 @@ def _handle_query_logs(input: dict) -> dict:
         days = input.get("days_back", 7)
         entries = get_recent_journal(days)
         return {"journal": entries, "count": len(entries)}
+
+    elif query_type == "date_search":
+        # Search specific date for any table type
+        date = input.get("date")  # YYYY-MM-DD format
+        table = input.get("table", "meals")
+        if not date:
+            return {"error": "date parameter required for date_search (YYYY-MM-DD format)"}
+        entries = get_logs_by_date(table, date)
+        return {"entries": entries, "count": len(entries), "table": table, "date": date}
 
     return {"error": f"Unknown query type: {query_type}"}
 

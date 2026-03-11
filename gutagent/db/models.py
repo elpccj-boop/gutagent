@@ -299,6 +299,33 @@ def search_meals_by_food(food: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_logs_by_date(table: str, date: str) -> list[dict]:
+    """
+    Get all entries from a table for a specific date.
+
+    Args:
+        table: One of meals, symptoms, vitals, medication_events, sleep, exercise, journal
+        date: Date string in YYYY-MM-DD format
+
+    Returns:
+        List of entries with all fields including id
+    """
+    allowed_tables = {"meals", "symptoms", "vitals", "medication_events", "sleep", "exercise", "journal"}
+    if table not in allowed_tables:
+        return []
+
+    # journal uses logged_at, others use occurred_at
+    date_column = "logged_at" if table == "journal" else "occurred_at"
+
+    conn = get_connection()
+    rows = conn.execute(
+        f"SELECT * FROM {table} WHERE DATE({date_column}) = ? ORDER BY {date_column} DESC",
+        (date,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 # --- Symptom Operations ---
 
 def log_symptom(symptom: str, severity: int, timing: str | None = None,

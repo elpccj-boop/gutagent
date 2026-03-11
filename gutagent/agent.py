@@ -1,7 +1,7 @@
 """Core agent loop — the heart of GutAgent."""
 
 from gutagent.tools.registry import execute_tool
-from gutagent.prompts.system import build_system_prompt
+from gutagent.prompts.system import build_static_system_prompt, build_dynamic_context
 from gutagent.config import TOOLS, MAX_TOKENS, LLM_PROVIDER, get_model_for_tier
 from gutagent.llm import get_provider
 
@@ -26,7 +26,11 @@ def run_agent(
     exactly what's happening at each step.
     """
     
-    system_prompt = build_system_prompt(profile)
+    # Build system prompt as (static, dynamic) tuple for proper caching
+    # Static part (instructions + profile) is cached, dynamic part (recent data) is not
+    static_prompt = build_static_system_prompt(profile)
+    dynamic_context = build_dynamic_context()
+    system_prompt = (static_prompt, dynamic_context)
     
     # Use passed model or default for current provider
     if model is None:

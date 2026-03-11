@@ -269,7 +269,7 @@ TOOLS = [
         "name": "query_logs",
         "description": (
             "Search logged data — meals, symptoms, vitals, medications, labs. "
-            "Use to check history, find patterns, or look up specific entries."
+            "Use to check history, find patterns, or look up specific entries by date."
         ),
         "input_schema": {
             "type": "object",
@@ -280,9 +280,9 @@ TOOLS = [
                         "recent_meals", "recent_symptoms", "food_search",
                         "symptom_search", "date_range", "recent_vitals",
                         "recent_meds", "recent_labs", "recent_sleep",
-                        "recent_exercise", "recent_journal"
+                        "recent_exercise", "recent_journal", "date_search"
                     ],
-                    "description": "Type of query"
+                    "description": "Type of query. Use date_search to find entries on a specific date."
                 },
                 "search_term": {
                     "type": "string",
@@ -291,6 +291,15 @@ TOOLS = [
                 "days_back": {
                     "type": "integer",
                     "description": "How many days back to search. Default 7 for meals/symptoms. For vitals, meds, and labs, omit this to get ALL historical data."
+                },
+                "date": {
+                    "type": "string",
+                    "description": "Specific date to search in YYYY-MM-DD format. Required for date_search query_type."
+                },
+                "table": {
+                    "type": "string",
+                    "enum": ["meals", "symptoms", "vitals", "medication_events", "sleep", "exercise", "journal"],
+                    "description": "Which table to search. Used with date_search. Default is meals."
                 }
             },
             "required": ["query_type"]

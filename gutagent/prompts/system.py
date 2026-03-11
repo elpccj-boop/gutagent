@@ -25,7 +25,7 @@ def get_dynamic_context() -> str:
 
     # Medication timeline (all history — important for context)
     meds = conn.execute("""
-        SELECT medication, event_type, occurred_at, dose, notes
+        SELECT id, medication, event_type, occurred_at, dose, notes
         FROM medication_events
         ORDER BY occurred_at
     """).fetchall()
@@ -35,7 +35,7 @@ def get_dynamic_context() -> str:
         for m in meds:
             dose_str = f" ({m['dose']})" if m['dose'] else ""
             notes_str = f" — {m['notes']}" if m['notes'] else ""
-            lines.append(f"- {m['occurred_at']} [{m['event_type']}]: {m['medication']}{dose_str}{notes_str}")
+            lines.append(f"- [id:{m['id']}] {m['occurred_at']} [{m['event_type']}]: {m['medication']}{dose_str}{notes_str}")
         sections.append("## Medication Timeline\n" + "\n".join(lines))
 
     # Latest labs
@@ -56,7 +56,7 @@ def get_dynamic_context() -> str:
 
     # Recent vitals — last 7 days
     vitals = conn.execute("""
-        SELECT vital_type, systolic, diastolic, heart_rate, value, unit, occurred_at, notes
+        SELECT id, vital_type, systolic, diastolic, heart_rate, value, unit, occurred_at, notes
         FROM vitals
         WHERE occurred_at >= ?
         ORDER BY occurred_at DESC
@@ -65,14 +65,14 @@ def get_dynamic_context() -> str:
         lines = []
         for v in vitals:
             if v['vital_type'] == 'blood_pressure':
-                lines.append(f"- {v['occurred_at']}: BP {v['systolic']}/{v['diastolic']} HR:{v['heart_rate']} | {v['notes'] or ''}")
+                lines.append(f"- [id:{v['id']}] {v['occurred_at']}: BP {v['systolic']}/{v['diastolic']} HR:{v['heart_rate']} | {v['notes'] or ''}")
             else:
-                lines.append(f"- {v['occurred_at']}: {v['vital_type']} {v['value']} {v['unit']} | {v['notes'] or ''}")
+                lines.append(f"- [id:{v['id']}] {v['occurred_at']}: {v['vital_type']} {v['value']} {v['unit']} | {v['notes'] or ''}")
         sections.append("## Recent Vitals (Last 7 Days)\n" + "\n".join(lines))
 
     # Recent meals — last 3 days (with nutrition if available)
     meals = conn.execute("""
-        SELECT m.occurred_at, m.meal_type, m.description, 
+        SELECT m.id, m.occurred_at, m.meal_type, m.description, 
                mn.calories, mn.protein, mn.carbs, mn.fat
         FROM meals m
         LEFT JOIN meal_nutrition mn ON m.id = mn.meal_id
@@ -82,7 +82,7 @@ def get_dynamic_context() -> str:
     if meals:
         lines = []
         for m in meals:
-            base = f"- {m['occurred_at']}: {m['meal_type'] or 'meal'} — {m['description']}"
+            base = f"- [id:{m['id']}] {m['occurred_at']}: {m['meal_type'] or 'meal'} — {m['description']}"
             if m['calories']:
                 base += f" [{int(m['calories'])} cal, {int(m['protein'])}g protein]"
             lines.append(base)
@@ -90,7 +90,7 @@ def get_dynamic_context() -> str:
 
     # Recent symptoms — last 7 days
     symptoms = conn.execute("""
-        SELECT occurred_at, symptom, severity, notes
+        SELECT id, occurred_at, symptom, severity, notes
         FROM symptoms
         WHERE occurred_at >= ?
         ORDER BY occurred_at DESC
@@ -99,12 +99,12 @@ def get_dynamic_context() -> str:
         lines = []
         for s in symptoms:
             notes_str = f" — {s['notes']}" if s['notes'] else ""
-            lines.append(f"- {s['occurred_at']}: {s['symptom']} (severity {s['severity']}){notes_str}")
+            lines.append(f"- [id:{s['id']}] {s['occurred_at']}: {s['symptom']} (severity {s['severity']}){notes_str}")
         sections.append("## Recent Symptoms (Last 7 Days)\n" + "\n".join(lines))
 
     # Recent sleep — last 7 days
     sleep = conn.execute("""
-        SELECT occurred_at, hours, quality, notes
+        SELECT id, occurred_at, hours, quality, notes
         FROM sleep
         WHERE occurred_at >= ?
         ORDER BY occurred_at DESC
@@ -115,12 +115,12 @@ def get_dynamic_context() -> str:
             hours_str = f"{s['hours']} hours" if s['hours'] else ""
             quality_str = f", {s['quality']}" if s['quality'] else ""
             notes_str = f" — {s['notes']}" if s['notes'] else ""
-            lines.append(f"- {s['occurred_at']}: {hours_str}{quality_str}{notes_str}")
+            lines.append(f"- [id:{s['id']}] {s['occurred_at']}: {hours_str}{quality_str}{notes_str}")
         sections.append("## Recent Sleep (Last 7 Days)\n" + "\n".join(lines))
 
     # Recent exercise — last 7 days
     exercise = conn.execute("""
-        SELECT occurred_at, activity, duration_minutes, notes
+        SELECT id, occurred_at, activity, duration_minutes, notes
         FROM exercise
         WHERE occurred_at >= ?
         ORDER BY occurred_at DESC
@@ -130,12 +130,12 @@ def get_dynamic_context() -> str:
         for e in exercise:
             duration_str = f" ({e['duration_minutes']} min)" if e['duration_minutes'] else ""
             notes_str = f" — {e['notes']}" if e['notes'] else ""
-            lines.append(f"- {e['occurred_at']}: {e['activity']}{duration_str}{notes_str}")
+            lines.append(f"- [id:{e['id']}] {e['occurred_at']}: {e['activity']}{duration_str}{notes_str}")
         sections.append("## Recent Exercise (Last 7 Days)\n" + "\n".join(lines))
 
     # Recent journal — last 7 days
     journal = conn.execute("""
-        SELECT logged_at, description
+        SELECT id, logged_at, description
         FROM journal
         WHERE logged_at >= ?
         ORDER BY logged_at DESC
@@ -143,7 +143,7 @@ def get_dynamic_context() -> str:
     if journal:
         lines = []
         for j in journal:
-            lines.append(f"- {j['logged_at']}: {j['description']}")
+            lines.append(f"- [id:{j['id']}] {j['logged_at']}: {j['description']}")
         sections.append("## Recent Journal (Last 7 Days)\n" + "\n".join(lines))
 
     # Saved recipes
@@ -188,27 +188,19 @@ def get_nutrition_alerts_text() -> str:
     return "\n".join(lines)
 
 
-def build_system_prompt(profile: dict) -> str:
-    """Build the system prompt with static profile and dynamic database context."""
-    today = datetime.now().strftime("%Y-%m-%d %H:%M")
+def build_static_system_prompt(profile: dict) -> str:
+    """
+    Build the STATIC portion of the system prompt.
+    This part is cached and should not change between calls.
+    """
     profile_text = json.dumps(profile, indent=2)
-    dynamic_context = get_dynamic_context()
-    nutrition_alerts = get_nutrition_alerts_text()
 
     return f"""You are GutAgent, a personalized dietary assistant for a patient with 
 inflammatory bowel disease. You are warm, practical, and evidence-informed — like a 
 knowledgeable friend who happens to understand IBD nutrition deeply.
 
-## Current Date and Time
-{today}
-
-## Patient's Medical Profile (Static)
+## Patient's Medical Profile
 {profile_text}
-
-## Current Data from Patient's Records
-{dynamic_context}
-
-{nutrition_alerts}
 
 ## Core Behavior
 
@@ -272,10 +264,12 @@ NEVER FABRICATE PATIENT DATA:
 - You CAN and SHOULD use your general medical knowledge to explain conditions, suggest questions for doctors, interpret patterns, and provide dietary guidance.
 
 CORRECTIONS:
-- If the user corrects a value (like severity), use correct_log to update the existing record.
+- Entry IDs are shown in square brackets like [id:47] in the recent data below.
+- If the user asks to correct or delete an entry, use correct_log with the correct entry_id.
+- Never guess IDs — only use IDs you can see in the recent data.
+- For entries older than the recent data window, use query_logs with query_type="date_search", the specific date (YYYY-MM-DD), and table (meals, symptoms, vitals, etc.) to find the entry and its ID.
+- Example: "correct my lunch from March 5th" → first call query_logs with query_type="date_search", date="2026-03-05", table="meals" to get the entry ID, then use correct_log.
 - Never create a new entry when a correction is needed.
-- If the user wants to remove a duplicate, use correct_log with action=delete.
-- Always confirm the correction with the user.
 
 SAVING SUGGESTIONS:
 - When you suggest medical tests, deficiency checks, or important items to discuss with a doctor, offer to save them if the user seems interested.
@@ -288,3 +282,30 @@ RECIPES:
 - When logging a meal that matches a saved recipe name, use the recipe_name parameter
 - Check for saved recipes when logging meals that match recipe names
 """
+
+
+def build_dynamic_context() -> str:
+    """
+    Build the DYNAMIC portion of the system prompt.
+    This changes between calls and is NOT cached.
+    """
+    today = datetime.now().strftime("%Y-%m-%d %H:%M")
+    dynamic_context = get_dynamic_context()
+    nutrition_alerts = get_nutrition_alerts_text()
+
+    return f"""## Current Date and Time
+{today}
+
+## Current Data from Patient's Records
+{dynamic_context}
+
+{nutrition_alerts}"""
+
+
+def build_system_prompt(profile: dict) -> str:
+    """
+    Build the complete system prompt (for backward compatibility).
+    Prefer using build_static_system_prompt() + build_dynamic_context() separately
+    for prompt caching.
+    """
+    return build_static_system_prompt(profile) + "\n\n" + build_dynamic_context()
