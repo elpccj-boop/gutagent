@@ -91,6 +91,17 @@ def run_agent(
                     display = result[:200] + "..." if len(result) > 200 else result
                     print(f"  → {display}")
 
+                # Truncate very large tool results to prevent conversation history bloat
+                # Claude can ask for more specific queries if needed
+                MAX_RESULT_CHARS = 8000  # ~2000 tokens
+                if len(result) > MAX_RESULT_CHARS:
+                    truncated_result = result[:MAX_RESULT_CHARS]
+                    # Try to cut at a natural boundary (end of a JSON object or line)
+                    last_newline = truncated_result.rfind('\n')
+                    if last_newline > MAX_RESULT_CHARS * 0.8:
+                        truncated_result = truncated_result[:last_newline]
+                    result = truncated_result + f'\n... [truncated, {len(result)} chars total. Use more specific query or date_search for details.]'
+
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block["id"],
