@@ -193,9 +193,14 @@ def _handle_query_logs(input: dict) -> dict:
 
     elif query_type == "recent_vitals":
         vital_type = input.get("search_term")
-        days = input.get("days_back", 0)
-        vitals = get_recent_vitals(days, vital_type)
-        return {"vitals": vitals, "count": len(vitals)}
+        days = input.get("days_back", 0)  # Default 0 = all history with summaries
+        result = get_recent_vitals(days, vital_type)
+        # If days_back=0, result is a dict with recent + summaries
+        # If days_back>0, result is a list
+        if isinstance(result, dict):
+            return result
+        else:
+            return {"vitals": result, "count": len(result)}
 
     elif query_type == "recent_meds":
         meds = get_recent_meds(days_back)

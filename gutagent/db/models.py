@@ -421,20 +421,101 @@ def log_vital(vital_type: str, occurred_at: str | None = None,
     return result
 
 
-def get_recent_vitals(days_back: int = 0, vital_type: str | None = None) -> list:
+def get_recent_vitals(days_back: int = 0, vital_type: str | None = None) -> list | dict:
+    """
+    Get vital signs.
+    - days_back > 0: Returns raw list of vitals from that period
+    - days_back = 0: Returns recent (30 days) detail + historical yearly summaries
+    """
     conn = get_connection()
-    query = "SELECT * FROM vitals WHERE 1=1"
-    params = []
+
     if days_back > 0:
+        # Simple case: just return vitals from the specified period
+        query = "SELECT * FROM vitals WHERE 1=1"
+        params = []
         cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
         query += " AND occurred_at >= ?"
         params.append(cutoff)
+        if vital_type:
+            query += " AND vital_type = ?"
+            params.append(vital_type)
+        rows = conn.execute(query + " ORDER BY occurred_at DESC", params).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # days_back = 0: Smart summarization
+    # Get recent 30 days in full detail
+    cutoff_30 = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+
+    query = "SELECT * FROM vitals WHERE occurred_at >= ?"
+    params = [cutoff_30]
     if vital_type:
         query += " AND vital_type = ?"
         params.append(vital_type)
-    rows = conn.execute(query + " ORDER BY occurred_at", params).fetchall()
+    recent_rows = conn.execute(query + " ORDER BY occurred_at DESC", params).fetchall()
+    recent = [dict(r) for r in recent_rows]
+
+    # Get historical summaries by year (before the 30-day window)
+    if vital_type == "blood_pressure" or vital_type is None:
+        historical_bp = conn.execute("""
+            SELECT 
+                strftime('%Y', occurred_at) as year,
+                COUNT(*) as count,
+                ROUND(AVG(systolic), 0) as avg_systolic,
+                ROUND(AVG(diastolic), 0) as avg_diastolic,
+                ROUND(AVG(heart_rate), 0) as avg_hr,
+                MIN(systolic) as min_systolic,
+                MAX(systolic) as max_systolic,
+                MIN(diastolic) as min_diastolic,
+                MAX(diastolic) as max_diastolic
+            FROM vitals
+            WHERE vital_type = 'blood_pressure'
+              AND occurred_at < ?
+            GROUP BY strftime('%Y', occurred_at)
+            ORDER BY year DESC
+        """, (cutoff_30,)).fetchall()
+        bp_summary = [dict(r) for r in historical_bp]
+    else:
+        bp_summary = []
+
+    # Get historical summaries for other vital types
+    other_summaries = {}
+    if vital_type is None or (vital_type and vital_type != "blood_pressure"):
+        other_rows = conn.execute("""
+            SELECT 
+                vital_type,
+                strftime('%Y', occurred_at) as year,
+                COUNT(*) as count,
+                ROUND(AVG(value), 1) as avg_value,
+                MIN(value) as min_value,
+                MAX(value) as max_value,
+                unit
+            FROM vitals
+            WHERE vital_type != 'blood_pressure'
+              AND occurred_at < ?
+              AND value IS NOT NULL
+            GROUP BY vital_type, strftime('%Y', occurred_at)
+            ORDER BY vital_type, year DESC
+        """, (cutoff_30,)).fetchall()
+        for row in other_rows:
+            vtype = row["vital_type"]
+            if vtype not in other_summaries:
+                other_summaries[vtype] = []
+            other_summaries[vtype].append(dict(row))
+
     conn.close()
-    return [dict(r) for r in rows]
+
+    result = {
+        "recent_30_days": recent,
+        "recent_count": len(recent)
+    }
+
+    if bp_summary:
+        result["historical_bp_by_year"] = bp_summary
+    if other_summaries:
+        result["historical_other_by_year"] = other_summaries
+
+    return result
 
 
 # -- Labs Operations --

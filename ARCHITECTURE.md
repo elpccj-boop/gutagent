@@ -472,7 +472,7 @@ All timestamps are **local time** (no UTC).
 |--------|------|-------|
 | id | INTEGER | Primary key |
 | medication | TEXT | Name of medication (or full med list for snapshots) |
-| event_type | TEXT | started, stopped, dose_changed, side_effect, snapshot |
+| event_type | TEXT | started, stopped, dose_changed |
 | occurred_at | TIMESTAMP | When event happened |
 | dose | TEXT | Dose information |
 | notes | TEXT | Additional context |
@@ -713,7 +713,6 @@ The profile stores static facts. Dynamic data lives in the database.
   },
   "suggestions": {
     "tests_to_request": [],
-    "to_discuss_with_doctor": [],
     "other": []
   },
   "upcoming_appointments": {}

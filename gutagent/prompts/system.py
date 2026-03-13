@@ -21,136 +21,130 @@ def get_dynamic_context() -> str:
     # Cutoffs in local time
     now = datetime.now()
     cutoff_7_days = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff_30_days = (now - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
     cutoff_3_days = (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
 
-    # Medication timeline (all history — important for context)
+    # Current medications + recent changes
     meds = conn.execute("""
-        SELECT id, medication, event_type, occurred_at, dose, notes
-        FROM medication_events
-        ORDER BY occurred_at
-    """).fetchall()
-
+        SELECT me.*
+        FROM medication_events me
+        WHERE me.occurred_at >= ?
+           OR (me.event_type = 'started' 
+               AND me.id = (SELECT id FROM medication_events me2 
+                            WHERE me2.medication = me.medication 
+                            ORDER BY occurred_at DESC LIMIT 1))
+        ORDER BY occurred_at DESC
+    """, (cutoff_30_days,)).fetchall()
     if meds:
-        lines = []
-        for m in meds:
-            dose_str = f" ({m['dose']})" if m['dose'] else ""
-            notes_str = f" — {m['notes']}" if m['notes'] else ""
-            lines.append(f"- [id:{m['id']}] {m['occurred_at']} [{m['event_type']}]: {m['medication']}{dose_str}{notes_str}")
-        sections.append("## Medication Timeline\n" + "\n".join(lines))
+        lines = [
+            f"- [id:{m['id']}] {m['occurred_at']} [{m['event_type']}]: {m['medication']}"
+            f"{f' ({m['dose']})' if m['dose'] else ''}"
+            f"{f' — {m['notes'][:100]}' if m['notes'] else ''}"
+            for m in meds
+        ]
+        sections.append("## Medications (Current + Recent 30d)\n" + "\n".join(lines))
 
     # Latest labs
     labs = conn.execute("""
-        SELECT test_name, value, unit, reference_range, status, notes
-        FROM labs
-        WHERE test_date = (SELECT MAX(test_date) FROM labs)
-        ORDER BY status, test_name
+        SELECT *
+        FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY test_name ORDER BY test_date DESC) as rn
+            FROM labs
+        )
+        WHERE rn = 1
+        ORDER BY test_date DESC, test_name
     """).fetchall()
     if labs:
-        lines = []
-        for lab in labs:
-            val = f"{lab['value']} {lab['unit']}" if lab['value'] else "—"
-            ref = f" (ref: {lab['reference_range']})" if lab['reference_range'] else ""
-            flag = " ⚠" if lab['status'] in ('high', 'low', 'critical', 'abnormal') else ""
-            lines.append(f"- {lab['test_name']}: {val}{ref} [{lab['status']}]{flag}")
-        sections.append("## Latest Lab Results\n" + "\n".join(lines))
+        lines = [
+            f"- {lab['test_name']}: "
+            f"{f'{lab['value']} {lab['unit']}' if lab['value'] else '—'}"
+            f"{f' (ref: {lab['reference_range']})' if lab['reference_range'] else ''}"
+            f"{f' [{lab['status']}]' if lab['status'] else ''}"
+            f"{f' — {lab['notes'][:100]}' if lab['notes'] else ''}"
+            for lab in labs
+        ]
+        sections.append("## Labs (Latest)\n" + "\n".join(lines))
 
-    # Recent vitals — last 7 days
+    # Recent vitals
     vitals = conn.execute("""
-        SELECT id, vital_type, systolic, diastolic, heart_rate, value, unit, occurred_at, notes
-        FROM vitals
-        WHERE occurred_at >= ?
+        SELECT * FROM vitals WHERE occurred_at >= ?
         ORDER BY occurred_at DESC
     """, (cutoff_7_days,)).fetchall()
     if vitals:
         lines = []
         for v in vitals:
+            notes_str = f" — {v['notes'][:100]}" if v['notes'] else ""
             if v['vital_type'] == 'blood_pressure':
-                lines.append(f"- [id:{v['id']}] {v['occurred_at']}: BP {v['systolic']}/{v['diastolic']} HR:{v['heart_rate']} | {v['notes'] or ''}")
+                lines.append(f"- [id:{v['id']}] {v['occurred_at'][:10]}: {v['systolic']}/{v['diastolic']} HR:{v['heart_rate'] or '?'}{notes_str}")
             else:
-                lines.append(f"- [id:{v['id']}] {v['occurred_at']}: {v['vital_type']} {v['value']} {v['unit']} | {v['notes'] or ''}")
-        sections.append("## Recent Vitals (Last 7 Days)\n" + "\n".join(lines))
+                lines.append(f"- [id:{v['id']}] {v['occurred_at'][:10]}: {v['vital_type']} {v['value']} {v['unit']}{notes_str}")
+        sections.append("## Vitals (7d)\n" + "\n".join(lines))
 
-    # Recent meals — last 3 days (with nutrition if available)
+    # Recent meals
     meals = conn.execute("""
-        SELECT m.id, m.occurred_at, m.meal_type, m.description, 
-               mn.calories, mn.protein, mn.carbs, mn.fat
+        SELECT m.*, mn.calories, mn.protein, mn.carbs, mn.fat, mn.fiber
         FROM meals m
         LEFT JOIN meal_nutrition mn ON m.id = mn.meal_id
         WHERE m.occurred_at >= ?
         ORDER BY m.occurred_at DESC
     """, (cutoff_3_days,)).fetchall()
     if meals:
-        lines = []
-        for m in meals:
-            base = f"- [id:{m['id']}] {m['occurred_at']}: {m['meal_type'] or 'meal'} — {m['description']}"
-            if m['calories']:
-                base += f" [{int(m['calories'])} cal, {int(m['protein'])}g protein]"
-            lines.append(base)
-        sections.append("## Recent Meals (Last 3 Days)\n" + "\n".join(lines))
+        lines = [
+            f"- [id:{m['id']}] {m['occurred_at']}: {m['meal_type'] or 'meal'} — {m['description']}"
+            f"{f' [{int(m['calories'])}cal {int(m['protein'])}g]' if m['calories'] else ''}"
+            for m in meals
+        ]
+        sections.append("## Meals (3d)\n" + "\n".join(lines))
 
-    # Recent symptoms — last 7 days
+    # Recent symptoms
     symptoms = conn.execute("""
-        SELECT id, occurred_at, symptom, severity, notes
-        FROM symptoms
-        WHERE occurred_at >= ?
+        SELECT * FROM symptoms WHERE occurred_at >= ?
         ORDER BY occurred_at DESC
     """, (cutoff_7_days,)).fetchall()
     if symptoms:
-        lines = []
-        for s in symptoms:
-            notes_str = f" — {s['notes']}" if s['notes'] else ""
-            lines.append(f"- [id:{s['id']}] {s['occurred_at']}: {s['symptom']} (severity {s['severity']}){notes_str}")
-        sections.append("## Recent Symptoms (Last 7 Days)\n" + "\n".join(lines))
+        lines = [
+            f"- [id:{s['id']}] {s['occurred_at']}: {s['symptom']} ({s['severity']})"
+            f"{f' — {s['notes'][:100]}' if s['notes'] else ''}"
+            for s in symptoms
+        ]
+        sections.append("## Symptoms (7d)\n" + "\n".join(lines))
 
-    # Recent sleep — last 7 days
+    # Recent sleep
     sleep = conn.execute("""
-        SELECT id, occurred_at, hours, quality, notes
-        FROM sleep
-        WHERE occurred_at >= ?
-        ORDER BY occurred_at DESC
-    """, (cutoff_7_days,)).fetchall()
+        SELECT * FROM sleep WHERE occurred_at >= ? ORDER BY occurred_at DESC
+    """, (cutoff_3_days,)).fetchall()
     if sleep:
-        lines = []
-        for s in sleep:
-            hours_str = f"{s['hours']} hours" if s['hours'] else ""
-            quality_str = f", {s['quality']}" if s['quality'] else ""
-            notes_str = f" — {s['notes']}" if s['notes'] else ""
-            lines.append(f"- [id:{s['id']}] {s['occurred_at']}: {hours_str}{quality_str}{notes_str}")
-        sections.append("## Recent Sleep (Last 7 Days)\n" + "\n".join(lines))
+        lines = [
+            f"- [id:{s['id']}] {s['occurred_at'][:10]}: {s['hours'] or '?'}h {s['quality'] or ''}"
+            f"{f' — {s['notes'][:100]}' if s['notes'] else ''}"
+            for s in sleep
+        ]
+        sections.append("## Sleep (3d)\n" + "\n".join(lines))
 
-    # Recent exercise — last 7 days
+    # Recent exercise
     exercise = conn.execute("""
-        SELECT id, occurred_at, activity, duration_minutes, notes
-        FROM exercise
-        WHERE occurred_at >= ?
-        ORDER BY occurred_at DESC
-    """, (cutoff_7_days,)).fetchall()
+        SELECT * FROM exercise WHERE occurred_at >= ? ORDER BY occurred_at DESC
+    """, (cutoff_3_days,)).fetchall()
     if exercise:
-        lines = []
-        for e in exercise:
-            duration_str = f" ({e['duration_minutes']} min)" if e['duration_minutes'] else ""
-            notes_str = f" — {e['notes']}" if e['notes'] else ""
-            lines.append(f"- [id:{e['id']}] {e['occurred_at']}: {e['activity']}{duration_str}{notes_str}")
-        sections.append("## Recent Exercise (Last 7 Days)\n" + "\n".join(lines))
+        lines = [
+            f"- [id:{e['id']}] {e['occurred_at'][:10]}: {e['activity']} {e['duration_minutes'] or '?'}min"
+            f"{f' — {e['notes'][:100]}' if e['notes'] else ''}"
+            for e in exercise
+        ]
+        sections.append("## Exercise (3d)\n" + "\n".join(lines))
 
-    # Recent journal — last 7 days
+    # Recent journal
     journal = conn.execute("""
-        SELECT id, logged_at, description
-        FROM journal
-        WHERE logged_at >= ?
-        ORDER BY logged_at DESC
-    """, (cutoff_7_days,)).fetchall()
+        SELECT * FROM journal WHERE logged_at >= ? ORDER BY logged_at DESC LIMIT 5
+    """, (cutoff_3_days,)).fetchall()
     if journal:
-        lines = []
-        for j in journal:
-            lines.append(f"- [id:{j['id']}] {j['logged_at']}: {j['description']}")
-        sections.append("## Recent Journal (Last 7 Days)\n" + "\n".join(lines))
+        lines = [f"- [id:{j['id']}] {j['logged_at'][:10]}: {j['description'][:100]}" for j in journal]
+        sections.append("## Journal (3d)\n" + "\n".join(lines))
 
     # Saved recipes
     recipes = conn.execute("SELECT name FROM recipes ORDER BY name").fetchall()
     if recipes:
-        recipe_names = [r['name'] for r in recipes]
-        sections.append("## Saved Recipes\n" + ", ".join(recipe_names))
+        sections.append("## Recipes: " + ", ".join(r['name'] for r in recipes))
 
     conn.close()
     return "\n\n".join(sections) if sections else "No data logged yet."
@@ -178,7 +172,7 @@ def get_nutrition_alerts_text() -> str:
                 f"{severity_marker} Low {nutrient_name}: {alert['daily_average']}{alert['unit']}/day "
                 f"({alert['percent_of_rda']}% of {alert['target']}{alert['unit']} target)"
             )
-        else:  # excess
+        else:
             severity_marker = "⚠️" if alert["severity"] == "high" else "🔴"
             lines.append(
                 f"{severity_marker} High {nutrient_name}: {alert['daily_average']}{alert['unit']}/day "
@@ -206,7 +200,7 @@ knowledgeable friend who happens to understand IBD nutrition deeply.
 
 PROACTIVE LOGGING:
 - When the user mentions eating ANYTHING, call log_meal immediately — even casual mentions
-- Parse meals into individual food items with estimated nutrition (calories, protein, carbs, fat, fiber, and micronutrients)
+- Parse meals into individual food items with estimated nutrition (calories, protein, carbs, fat, fiber, AND micronutrients)
 - Use your knowledge to estimate nutrition for any food, including Indian cuisine
 - Check for saved recipes first; if a dish matches a saved recipe, use recipe_name parameter
 - When the user mentions ANY physical or mental symptom, call log_symptom immediately
@@ -219,9 +213,8 @@ PROACTIVE LOGGING:
 
 NUTRITION TRACKING:
 - Estimate nutrition directly using your knowledge — no external lookup needed
-- Track both macros (calories, protein, carbs, fat, fiber) and micronutrients (B12, D, folate, iron, zinc, magnesium, calcium, potassium, omega-3, vitamin A, vitamin C)
+- Track both macros (calories, protein, carbs, fat, fiber) AND micronutrients (B12, D, folate, iron, zinc, magnesium, calcium, potassium, omega-3, vitamin A, vitamin C)
 - Provide reasonable estimates even for regional/ethnic foods
-- Example: "2 rotis with dal" → roti (120 cal, 3g protein, 2mg iron each), dal (150 cal, 10g protein, 3mg iron per cup)
 - Include brief nutrition summary when logging meals (e.g., "~450 cal, 32g protein")
 - When discussing nutrition, proactively mention any alerts if relevant
 - Offer to save recipes when the user describes dishes they eat often
@@ -244,7 +237,6 @@ COMMUNICATION STYLE:
 - Honest about uncertainty — "based on your pattern" not "definitely"
 - Don't repeat the patient's full medical history back to them
 - When logging meals/symptoms, confirm briefly and move on
-- Include brief nutrition summary when logging meals (e.g., "~450 cal, 32g protein")
 
 PATTERN AWARENESS:
 - If the patient reports a symptom, check recent meals using query_logs
@@ -255,7 +247,6 @@ PATTERN AWARENESS:
 ANALYZING TRENDS — ALWAYS CHECK BASELINE:
 - When analyzing ANY trend (BP, symptoms, weight, sleep, etc.), don't just show recent data — establish what "normal" looks like for this patient
 - Use query_logs to pull historical data to find the baseline pattern
-- If the patient corrects your analysis, acknowledge specifically what you missed and why
 
 NEVER FABRICATE PATIENT DATA:
 - Never invent or assume medications, diagnoses, lab results, or any details about THIS patient.
@@ -273,7 +264,7 @@ CORRECTIONS:
 
 SAVING SUGGESTIONS:
 - When you suggest medical tests, deficiency checks, or important items to discuss with a doctor, offer to save them if the user seems interested.
-- If the user says "save that", "remember that", or "add that to my list", use update_profile to save to suggestions.tests_to_request or suggestions.to_discuss_with_doctor.
+- If the user says "save that", "remember that", or "add that to my list", use update_profile to save to suggestions.tests_to_request.
 - Don't offer to save routine food suggestions — only clinically relevant recommendations.
 
 RECIPES:

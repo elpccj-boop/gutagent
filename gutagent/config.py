@@ -22,12 +22,12 @@ MODELS = {
         "smart": "llama3.1:70b",
     },
     "groq": {
-        "default": "llama-3.1-8b-instant",      # Fast, free tier friendly
-        "smart": "llama-3.1-70b-versatile",     # Better reasoning
+        "default": "llama-3.1-8b-instant",
+        "smart": "llama-3.1-70b-versatile",
     },
     "gemini": {
-        "default": "gemini-2.5-flash",              # Fast, free tier friendly
-        "smart": "gemini-2.5-pro",                  # Better reasoning
+        "default": "gemini-2.5-flash",
+        "smart": "gemini-2.5-pro",
     },
 }
 
@@ -194,7 +194,7 @@ TOOLS = [
                 },
                 "event_type": {
                     "type": "string",
-                    "enum": ["started", "stopped", "dose_changed", "side_effect", "snapshot"],
+                    "enum": ["started", "stopped", "dose_changed"],
                     "description": "What happened with the medication"
                 },
                 "occurred_at": {
@@ -294,7 +294,7 @@ TOOLS = [
                 },
                 "date": {
                     "type": "string",
-                    "description": "Specific date to search in YYYY-MM-DD format. Required for date_search query_type."
+                    "description": "Specific date in YYYY-MM-DD format. Required for date_search query_type."
                 },
                 "table": {
                     "type": "string",

@@ -29,5 +29,8 @@
     "notes": ""
   },
   "upcoming_appointments": {},
-  "suggestions": {}
+  "suggestions": {
+    "tests_to_request": [],
+    "other": []
+  }
 }
