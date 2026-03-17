@@ -19,9 +19,8 @@ from pydantic import BaseModel
 from gutagent.config import TOOLS, MAX_TOKENS, LLM_PROVIDER, get_model_for_tier
 from gutagent.profile import load_profile
 from gutagent.db.models import init_db
-from gutagent.prompts.system import build_system_prompt
+from gutagent.prompts.system import build_static_system_prompt, build_dynamic_context
 from gutagent.tools.registry import execute_tool
-from gutagent.llm import get_provider
 
 
 # Initialize
@@ -62,14 +61,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Session storage (in-memory for now — resets on server restart)
-# For persistence, you'd store in SQLite or Redis
-sessions: dict[str, list] = {}
+# Session storage for recent_logs and last_exchange (for corrections)
+# Keyed by session_id, stores {"recent_logs": {...}, "last_exchange": {...}}
+sessions: dict[str, dict] = {}
+
+
+# Tools that create log entries — we track their results for edit context
+LOG_TOOLS = {
+    "log_meal": "meals",
+    "log_symptom": "symptoms",
+    "log_vital": "vitals",
+    "log_medication_event": "medications",
+    "log_sleep": "sleep",
+    "log_exercise": "exercise",
+    "log_journal": "journal",
+}
 
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: str = "default"
+    session_id: str = "default"  # For tracking recent_logs/last_exchange
     model: str = "default"  # "default" (fast/cheap) or "smart" (capable)
     show_tools: bool = False
 
@@ -79,27 +90,75 @@ def get_model(tier: str) -> str:
     return get_model_for_tier(tier)
 
 
+def format_recent_logs(recent_logs: dict) -> str:
+    """Format recent_logs dict into a string for the prompt."""
+    if not recent_logs:
+        return ""
+
+    lines = ["Recently logged (available for edits):"]
+    for table, entries in recent_logs.items():
+        for entry in entries:
+            entry_id = entry.get("id", "?")
+            desc = (
+                entry.get("summary") or
+                entry.get("description") or
+                entry.get("symptom") or
+                entry.get("vital_type") or
+                entry.get("type") or
+                entry.get("reading") or
+                entry.get("medication") or
+                entry.get("event_type") or
+                str(entry)[:50]
+            )
+            lines.append(f"  [{table}] id:{entry_id} — {desc}")
+
+    return "\n".join(lines)
+
+
 async def run_agent_streaming(
     user_message: str,
-    conversation_history: list,
     profile: dict,
     model: str,
+    session_id: str,
     show_tools: bool = False,
 ) -> AsyncGenerator[str, None]:
     """
     Streaming version of the agent loop.
     Yields Server-Sent Events as Claude generates responses.
+
+    Tracks recent_logs and last_exchange per session for corrections.
     """
     import anthropic
     client = anthropic.Anthropic()
 
-    system_prompt = build_system_prompt(profile)
+    # Get or create session state
+    if session_id not in sessions:
+        sessions[session_id] = {"recent_logs": {}, "last_exchange": {}}
 
-    # Add user message to history
-    conversation_history.append({
-        "role": "user",
-        "content": user_message,
-    })
+    session = sessions[session_id]
+    recent_logs = session["recent_logs"]
+    last_exchange = session["last_exchange"]
+
+    # Build system prompt
+    static_prompt = build_static_system_prompt(profile)
+    dynamic_context = build_dynamic_context()
+
+    # Add recent logs context if we have any
+    logs_context = format_recent_logs(recent_logs)
+    if logs_context:
+        dynamic_context = dynamic_context + "\n\n" + logs_context
+
+    system_prompt = static_prompt + "\n\n" + dynamic_context
+
+    # Messages for this turn - include last exchange for minimal context
+    messages = []
+    if last_exchange.get("user") and last_exchange.get("assistant"):
+        messages.append({"role": "user", "content": last_exchange["user"]})
+        messages.append({"role": "assistant", "content": last_exchange["assistant"]})
+    messages.append({"role": "user", "content": user_message})
+
+    # Track logs created this turn
+    logs_this_turn = {}
     
     max_iterations = 10
     iteration = 0
@@ -108,7 +167,6 @@ async def run_agent_streaming(
         iteration += 1
         
         # Stream from Claude
-        collected_content = []
         current_text = ""
         tool_uses = []
 
@@ -117,7 +175,7 @@ async def run_agent_streaming(
             max_tokens=MAX_TOKENS,
             system=system_prompt,
             tools=TOOLS,
-            messages=conversation_history,
+            messages=messages,
         ) as stream:
             for event in stream:
                 if event.type == "content_block_start":
@@ -144,7 +202,6 @@ async def run_agent_streaming(
 
                 elif event.type == "content_block_stop":
                     if current_text:
-                        collected_content.append({"type": "text", "text": current_text})
                         current_text = ""
         
             # Get final message for stop reason
@@ -164,7 +221,7 @@ async def run_agent_streaming(
                         "input": block.input,
                     })
 
-            conversation_history.append({
+            messages.append({
                 "role": "assistant",
                 "content": assistant_content,
             })
@@ -173,42 +230,60 @@ async def run_agent_streaming(
             tool_results = []
             for block in final_message.content:
                 if block.type == "tool_use":
-                    if show_tools:
-                        yield f"data: {json.dumps({'type': 'tool_call', 'name': block.name, 'input': block.input})}\n\n"
+                    tool_name = block.name
 
-                    result = execute_tool(block.name, block.input)
+                    if show_tools:
+                        yield f"data: {json.dumps({'type': 'tool_call', 'name': tool_name, 'input': block.input})}\n\n"
+
+                    result = execute_tool(tool_name, block.input)
 
                     if show_tools:
                         # Truncate for display
                         display_result = result[:300] + "..." if len(result) > 300 else result
-                        yield f"data: {json.dumps({'type': 'tool_result', 'name': block.name, 'result': display_result})}\n\n"
+                        yield f"data: {json.dumps({'type': 'tool_result', 'name': tool_name, 'result': display_result})}\n\n"
 
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
                         "content": result,
                     })
-            
-            # Add tool results to history
-            conversation_history.append({
+
+                    # Track log operations
+                    if tool_name in LOG_TOOLS:
+                        table = LOG_TOOLS[tool_name]
+                        try:
+                            entry = json.loads(result)
+                            if "id" in entry:
+                                if table not in logs_this_turn:
+                                    logs_this_turn[table] = []
+                                logs_this_turn[table].append(entry)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+            # Add tool results to messages for next iteration
+            messages.append({
                 "role": "user",
                 "content": tool_results,
             })
             
             # Continue loop
         else:
-            # Final text response — add to history
-            text_parts = []
+            # Final text response
+            response_text = ""
             for block in final_message.content:
                 if hasattr(block, "text"):
-                    text_parts.append(block.text)
+                    response_text += block.text
 
-            assistant_message = "\n".join(text_parts)
-            conversation_history.append({
-                "role": "assistant",
-                "content": assistant_message,
-            })
+            # Update session state
+            for table, entries in logs_this_turn.items():
+                recent_logs[table] = entries
             
+            session["recent_logs"] = recent_logs
+            session["last_exchange"] = {
+                "user": user_message,
+                "assistant": response_text[:500]
+            }
+
             # Signal end of stream
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
@@ -219,22 +294,16 @@ async def run_agent_streaming(
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest, authenticated: bool = Depends(verify_credentials)):
-    """Stream a chat response."""
+    """Stream a chat response. Tracks recent_logs and last_exchange for corrections."""
     profile = load_profile()
-    
-    # Get or create session
-    if request.session_id not in sessions:
-        sessions[request.session_id] = []
-    
-    history = sessions[request.session_id]
     model = get_model(request.model)
     
     return StreamingResponse(
         run_agent_streaming(
             user_message=request.message,
-            conversation_history=history,
             profile=profile,
             model=model,
+            session_id=request.session_id,
             show_tools=request.show_tools,
         ),
         media_type="text/event-stream",
@@ -243,16 +312,6 @@ async def chat(request: ChatRequest, authenticated: bool = Depends(verify_creden
             "Connection": "keep-alive",
         },
     )
-
-
-@app.post("/api/clear")
-async def clear_session(request: Request, authenticated: bool = Depends(verify_credentials)):
-    """Clear conversation history for a session."""
-    data = await request.json()
-    session_id = data.get("session_id", "default")
-    if session_id in sessions:
-        sessions[session_id] = []
-    return {"status": "cleared"}
 
 
 @app.get("/api/context")

@@ -2,7 +2,6 @@
 
 import json
 from gutagent.db.models import (
-    log_meal as db_log_meal,
     log_meal_with_nutrition,
     log_symptom as db_log_symptom,
     log_medication_event as db_log_medication_event,
@@ -44,7 +43,6 @@ NUTRIENTS = [
 
 def execute_tool(tool_name: str, tool_input: dict) -> str:
     """Execute a tool and return its result as a string."""
-    print(f"[TOOL CALL] {tool_name}: {tool_input}")
     
     handlers = {
         "log_meal": _handle_log_meal,
@@ -78,24 +76,24 @@ def execute_tool(tool_name: str, tool_input: dict) -> str:
 
 
 def _handle_log_meal(input: dict) -> dict:
-    """Log a meal with nutrition data from Claude's estimates."""
+    """Log a meal with nutrition data from Claude's estimates or recipes."""
     items = input.get("items", [])
     recipe_name = input.get("recipe_name")
 
-    # If a recipe name is provided, try to use its nutrition data
+    # If a recipe name is provided, use its pre-calculated nutrition
     if recipe_name:
         recipe = get_recipe(recipe_name)
-        if recipe:
-            items = recipe["ingredients"]
-
-    # If no items, fall back to basic meal logging
-    if not items:
-        return db_log_meal(
-            meal_type=input.get("meal_type"),
-            description=input["description"],
-            notes=input.get("notes"),
-            occurred_at=input.get("occurred_at"),
-        )
+        if recipe and recipe.get("nutrition"):
+            # Use recipe's pre-calculated nutrition directly
+            # Store recipe name as the single "item" for reference
+            meal_items = [{"food_name": recipe_name, "quantity": 1, "unit": "serving"}]
+            return log_meal_with_nutrition(
+                meal_type=input.get("meal_type"),
+                description=input["description"],
+                items=meal_items,
+                nutrition=recipe["nutrition"],
+                occurred_at=input.get("occurred_at"),
+            )
 
     # Sum up nutrition from all items
     nutrition = {nutrient: 0 for nutrient in NUTRIENTS}
@@ -111,7 +109,6 @@ def _handle_log_meal(input: dict) -> dict:
             "food_name": item.get("name", "unknown"),
             "quantity": item.get("quantity"),
             "unit": item.get("unit"),
-            "is_spice": item.get("is_spice", False),
         })
 
     # Log meal with nutrition
@@ -120,7 +117,6 @@ def _handle_log_meal(input: dict) -> dict:
         description=input["description"],
         items=meal_items,
         nutrition=nutrition,
-        notes=input.get("notes"),
         occurred_at=input.get("occurred_at"),
     )
 
@@ -172,67 +168,88 @@ def _handle_query_logs(input: dict) -> dict:
 
     if query_type == "recent_meals":
         meals = get_recent_meals(days_back)
-        return {"meals": meals, "count": len(meals)}
+        # Compact format
+        compact = [f"[id:{m['id']}] {m['occurred_at'][:10]} {m.get('meal_type', '?')}: {m['description']}" for m in meals]
+        return {"count": len(meals), "meals": compact}
 
     elif query_type == "recent_symptoms":
         symptoms = get_recent_symptoms(days_back)
-        return {"symptoms": symptoms, "count": len(symptoms)}
+        compact = [f"[id:{s['id']}] {s['occurred_at'][:10]}: {s['symptom']} ({s.get('severity', '?')})" for s in symptoms]
+        return {"count": len(symptoms), "symptoms": compact}
 
     elif query_type == "food_search":
         meals = search_meals_by_food(search_term)
-        return {"meals": meals, "count": len(meals), "search": search_term}
+        compact = [f"[id:{m['id']}] {m['occurred_at'][:10]}: {m['description']}" for m in meals]
+        return {"count": len(meals), "search": search_term, "meals": compact}
 
     elif query_type == "symptom_search":
         symptoms = search_symptoms(search_term)
-        return {"symptoms": symptoms, "count": len(symptoms), "search": search_term}
+        compact = [f"[id:{s['id']}] {s['occurred_at'][:10]}: {s['symptom']} ({s.get('severity', '?')})" for s in symptoms]
+        return {"count": len(symptoms), "search": search_term, "symptoms": compact}
 
     elif query_type == "date_range":
         meals = get_recent_meals(days_back)
         symptoms = get_recent_symptoms(days_back)
-        return {"meals": meals, "symptoms": symptoms, "days": days_back}
+        compact_meals = [f"[id:{m['id']}] {m['occurred_at'][:10]} {m.get('meal_type', '?')}: {m['description']}" for m in meals]
+        compact_symptoms = [f"[id:{s['id']}] {s['occurred_at'][:10]}: {s['symptom']} ({s.get('severity', '?')})" for s in symptoms]
+        return {"days": days_back, "meals": compact_meals, "symptoms": compact_symptoms}
 
     elif query_type == "recent_vitals":
         vital_type = input.get("search_term")
-        days = input.get("days_back", 0)  # Default 0 = all history with summaries
-        result = get_recent_vitals(days, vital_type)
-        # If days_back=0, result is a dict with recent + summaries
-        # If days_back>0, result is a list
-        if isinstance(result, dict):
-            return result
-        else:
-            return {"vitals": result, "count": len(result)}
+        days = input.get("days_back", 0)
+        # Now returns a pre-formatted string summary
+        return get_recent_vitals(days, vital_type)
 
     elif query_type == "recent_meds":
         meds = get_recent_meds(days_back)
-        return {"medication_events": meds, "count": len(meds)}
+        compact = [f"[id:{m['id']}] {m['occurred_at'][:10]} {m['event_type']}: {m['medication']}" for m in meds]
+        return {"count": len(meds), "medications": compact}
 
     elif query_type == "recent_labs":
         labs = get_recent_labs(input.get("search_term"))
-        return {"labs": labs, "count": len(labs)}
+        compact = [f"[id:{l['id']}] {l['test_date']}: {l['test_name']} = {l['value']} {l.get('unit', '')} ({l.get('status', '?')})" for l in labs]
+        return {"count": len(labs), "labs": compact}
 
     elif query_type == "recent_sleep":
         days = input.get("days_back", 7)
         entries = get_recent_sleep(days)
-        return {"sleep": entries, "count": len(entries)}
+        compact = [f"[id:{e['id']}] {e['occurred_at'][:10]}: {e.get('hours', '?')}h {e.get('quality', '')}" for e in entries]
+        return {"count": len(entries), "sleep": compact}
 
     elif query_type == "recent_exercise":
         days = input.get("days_back", 7)
         entries = get_recent_exercise(days)
-        return {"exercise": entries, "count": len(entries)}
+        compact = [f"[id:{e['id']}] {e['occurred_at'][:10]}: {e['activity']} {e.get('duration_minutes', '?')}min" for e in entries]
+        return {"count": len(entries), "exercise": compact}
 
     elif query_type == "recent_journal":
         days = input.get("days_back", 7)
         entries = get_recent_journal(days)
-        return {"journal": entries, "count": len(entries)}
+        compact = [f"[id:{e['id']}] {e['logged_at'][:10]}: {e['description'][:50]}" for e in entries]
+        return {"count": len(entries), "journal": compact}
 
     elif query_type == "date_search":
-        # Search specific date for any table type
+        # Search specific date for any table type - return compact format
         date = input.get("date")  # YYYY-MM-DD format
         table = input.get("table", "meals")
         if not date:
             return {"error": "date parameter required for date_search (YYYY-MM-DD format)"}
         entries = get_logs_by_date(table, date)
-        return {"entries": entries, "count": len(entries), "table": table, "date": date}
+        # Compact: just id, time, and key info
+        compact = []
+        for e in entries:
+            if table == "meals":
+                compact.append(f"[id:{e['id']}] {e.get('meal_type', '?')}: {e['description']}")
+            elif table == "symptoms":
+                compact.append(f"[id:{e['id']}] {e['symptom']} ({e.get('severity', '?')})")
+            elif table == "vitals":
+                if e.get('systolic'):
+                    compact.append(f"[id:{e['id']}] BP {e['systolic']}/{e['diastolic']} HR:{e.get('heart_rate', '?')}")
+                else:
+                    compact.append(f"[id:{e['id']}] {e['vital_type']}: {e.get('value')} {e.get('unit', '')}")
+            else:
+                compact.append(f"[id:{e['id']}] {str(e)[:50]}")
+        return {"date": date, "table": table, "count": len(entries), "entries": compact}
 
     return {"error": f"Unknown query type: {query_type}"}
 
@@ -278,6 +295,7 @@ def _handle_save_recipe(input: dict) -> dict:
         name=input["name"],
         ingredients=input["ingredients"],
         notes=input.get("notes"),
+        servings=input.get("servings", 1),
     )
 
 
@@ -297,12 +315,11 @@ def _handle_delete_recipe(input: dict) -> dict:
     return delete_recipe(input["name"])
 
 
-def _handle_get_nutrition_summary(input: dict) -> dict:
+def _handle_get_nutrition_summary(input: dict) -> str:
     days = input.get("days", 3)
     return get_nutrition_summary(days)
 
 
-def _handle_get_nutrition_alerts(input: dict) -> dict:
+def _handle_get_nutrition_alerts(input: dict) -> str:
     days = input.get("days", 3)
-    alerts = get_nutrition_alerts(days)
-    return {"alerts": alerts, "count": len(alerts), "period_days": days}
+    return get_nutrition_alerts(days)

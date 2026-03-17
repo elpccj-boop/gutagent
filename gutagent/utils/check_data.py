@@ -80,10 +80,10 @@ def show_symptoms(conn, days_filter):
 
 def show_meds(conn, days_filter):
     print("\n--- Medication Events ---")
-    query = "SELECT * FROM medication_events ORDER BY occurred_at"
+    query = "SELECT * FROM medications ORDER BY occurred_at"
     if days_filter:
         cutoff = (datetime.now() - timedelta(days=days_filter)).strftime("%Y-%m-%d")
-        query = f"SELECT * FROM medication_events WHERE occurred_at >= '{cutoff}' ORDER BY occurred_at"
+        query = f"SELECT * FROM medications WHERE occurred_at >= '{cutoff}' ORDER BY occurred_at"
     for row in conn.execute(query):
         print(f"{row['id']}: {row['occurred_at']} | {row['medication']} | {row['event_type']} | {row['dose'] or ''} | {row['notes'] or ''}")
 

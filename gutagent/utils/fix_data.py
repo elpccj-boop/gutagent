@@ -22,11 +22,13 @@ Edit this script as needed for one-off corrections. Examples:
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "gutagent.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "../..", "data", "gutagent.db")
 
 conn = sqlite3.connect(DB_PATH)
 
 # --- Add your fixes below ---
+
+conn.execute("delete from vitals where occurred_at = '2026-03-14 17:56:07'")
 
 # --- End fixes ---
 

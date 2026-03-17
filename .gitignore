@@ -1,10 +1,11 @@
 data/gutagent.db*
+data/scripts/
 data/profile.json
 reports/
+scratch/misc.txt
 temp/
-docs/
-utils/import_history.py
-utils/import_labs.py
+docs/SERVER_SETUP.md
+docs/MOBILE_ARCHITECTURE.md
 .env
 __pycache__/
 *.pyc

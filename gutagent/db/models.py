@@ -5,7 +5,9 @@ import json
 import os
 from datetime import datetime, timedelta
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "gutagent.db")
+# Database path - can be overridden with GUTAGENT_DB_PATH env var for testing
+_default_db_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "gutagent.db")
+DB_PATH = os.getenv("GUTAGENT_DB_PATH", _default_db_path)
 
 # RDA values for nutrition alerts
 # target = daily recommended intake
@@ -52,8 +54,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             occurred_at TIMESTAMP,
             meal_type TEXT,
-            description TEXT NOT NULL,
-            notes TEXT
+            description TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS symptoms (
@@ -65,7 +66,7 @@ def init_db():
             notes TEXT
         );
             
-        CREATE TABLE IF NOT EXISTS medication_events (
+        CREATE TABLE IF NOT EXISTS medications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             medication TEXT NOT NULL,
             event_type TEXT NOT NULL,
@@ -125,7 +126,24 @@ def init_db():
             name TEXT NOT NULL UNIQUE COLLATE NOCASE,
             ingredients JSON NOT NULL,
             notes TEXT,
-            created_at TIMESTAMP
+            created_at TIMESTAMP,
+            servings REAL DEFAULT 1,
+            calories REAL DEFAULT 0,
+            protein REAL DEFAULT 0,
+            carbs REAL DEFAULT 0,
+            fat REAL DEFAULT 0,
+            fiber REAL DEFAULT 0,
+            vitamin_b12 REAL DEFAULT 0,
+            vitamin_d REAL DEFAULT 0,
+            folate REAL DEFAULT 0,
+            iron REAL DEFAULT 0,
+            zinc REAL DEFAULT 0,
+            magnesium REAL DEFAULT 0,
+            calcium REAL DEFAULT 0,
+            potassium REAL DEFAULT 0,
+            omega_3 REAL DEFAULT 0,
+            vitamin_a REAL DEFAULT 0,
+            vitamin_c REAL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS meal_items (
@@ -134,7 +152,6 @@ def init_db():
             food_name TEXT NOT NULL,
             quantity REAL,
             unit TEXT,
-            is_spice BOOLEAN DEFAULT 0,
             FOREIGN KEY (meal_id) REFERENCES meals(id) ON DELETE CASCADE
         );
 
@@ -171,7 +188,7 @@ def init_db():
 
 def update_log(table: str, entry_id: int, updates: dict) -> dict:
     """Update fields on an existing log entry."""
-    allowed_tables = {"meals", "symptoms", "vitals", "medication_events", "sleep", "exercise", "journal"}
+    allowed_tables = {"meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal"}
     if table not in allowed_tables:
         return {"error": f"Cannot update table: {table}"}
 
@@ -194,7 +211,7 @@ def update_log(table: str, entry_id: int, updates: dict) -> dict:
 
 def delete_log(table: str, entry_id: int) -> dict:
     """Delete a log entry by id."""
-    allowed_tables = {"meals", "symptoms", "vitals", "medication_events", "journal", "sleep", "exercise"}
+    allowed_tables = {"meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal"}
     if table not in allowed_tables:
         return {"error": f"Cannot delete from table: {table}"}
 
@@ -207,42 +224,25 @@ def delete_log(table: str, entry_id: int) -> dict:
 
 # --- Meal Operations ---
 
-def log_meal(meal_type: str | None, description: str,
-             notes: str | None = None, occurred_at: str | None = None) -> dict:
-    """Log a meal entry (basic, without nutrition)."""
-    timestamp = validate_timestamp(occurred_at)
-    conn = get_connection()
-    cursor = conn.execute(
-        "INSERT INTO meals (meal_type, description, notes, occurred_at) VALUES (?, ?, ?, ?)",
-        (meal_type, description, notes, timestamp)
-    )
-    conn.commit()
-    meal_id = cursor.lastrowid
-    conn.close()
-    return {"id": meal_id, "status": "logged", "meal_type": meal_type, "description": description, "when": timestamp}
-
-
 def log_meal_with_nutrition(meal_type: str | None, description: str, items: list[dict],
-                            nutrition: dict, notes: str | None = None,
-                            occurred_at: str | None = None) -> dict:
+                            nutrition: dict, occurred_at: str | None = None) -> dict:
     """Log a meal with itemized foods and calculated nutrition."""
     timestamp = validate_timestamp(occurred_at)
     conn = get_connection()
 
     # Insert meal
     cursor = conn.execute(
-        "INSERT INTO meals (meal_type, description, notes, occurred_at) VALUES (?, ?, ?, ?)",
-        (meal_type, description, notes, timestamp)
+        "INSERT INTO meals (meal_type, description, occurred_at) VALUES (?, ?, ?)",
+        (meal_type, description, timestamp)
     )
     meal_id = cursor.lastrowid
 
     # Insert meal items
     for item in items:
         conn.execute(
-            """INSERT INTO meal_items (meal_id, food_name, quantity, unit, is_spice)
-               VALUES (?, ?, ?, ?, ?)""",
-            (meal_id, item.get("food_name"), item.get("quantity"),
-             item.get("unit"), item.get("is_spice", False))
+            """INSERT INTO meal_items (meal_id, food_name, quantity, unit)
+               VALUES (?, ?, ?, ?)""",
+            (meal_id, item.get("food_name"), item.get("quantity"), item.get("unit"))
         )
 
     # Insert nutrition totals
@@ -266,24 +266,29 @@ def log_meal_with_nutrition(meal_type: str | None, description: str, items: list
     conn.commit()
     conn.close()
 
+    # Compact return - just essential info
+    cal = int(nutrition.get("calories", 0))
+    pro = int(nutrition.get("protein", 0))
     return {
         "id": meal_id,
         "status": "logged",
         "meal_type": meal_type,
-        "description": description,
         "when": timestamp,
-        "items_count": len(items),
-        "nutrition": nutrition
+        "summary": f"{description} — {cal} cal, {pro}g protein"
     }
 
 
 def get_recent_meals(days_back: int = 7) -> list[dict]:
-    """Get meals from the last N days."""
+    """Get meals from the last N days with nutrition data."""
     conn = get_connection()
     cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d %H:%M:%S")
-    rows = conn.execute(
-        "SELECT * FROM meals WHERE occurred_at >= ? ORDER BY occurred_at DESC", (cutoff,)
-    ).fetchall()
+    rows = conn.execute("""
+        SELECT m.*, mn.calories, mn.protein, mn.carbs, mn.fat, mn.fiber
+        FROM meals m
+        LEFT JOIN meal_nutrition mn ON m.id = mn.meal_id
+        WHERE m.occurred_at >= ? 
+        ORDER BY m.occurred_at DESC
+    """, (cutoff,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -304,13 +309,13 @@ def get_logs_by_date(table: str, date: str) -> list[dict]:
     Get all entries from a table for a specific date.
 
     Args:
-        table: One of meals, symptoms, vitals, medication_events, sleep, exercise, journal
+        table: One of meals, symptoms, vitals, medications, sleep, exercise, journal
         date: Date string in YYYY-MM-DD format
 
     Returns:
         List of entries with all fields including id
     """
-    allowed_tables = {"meals", "symptoms", "vitals", "medication_events", "sleep", "exercise", "journal"}
+    allowed_tables = {"meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal"}
     if table not in allowed_tables:
         return []
 
@@ -374,7 +379,7 @@ def log_medication_event(medication: str, event_type: str,
     timestamp = validate_timestamp(occurred_at)
     conn = get_connection()
     cursor = conn.execute(
-        "INSERT INTO medication_events (medication, event_type, occurred_at, dose, notes) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO medications (medication, event_type, occurred_at, dose, notes) VALUES (?, ?, ?, ?, ?)",
         (medication, event_type, timestamp, dose, notes)
     )
     conn.commit()
@@ -384,12 +389,35 @@ def log_medication_event(medication: str, event_type: str,
 
 
 def get_recent_meds(days_back: int = 365) -> list:
+    """Get medication events from last N days."""
     conn = get_connection()
     cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
     rows = conn.execute(
-        "SELECT * FROM medication_events WHERE occurred_at >= ? ORDER BY occurred_at",
+        "SELECT * FROM medications WHERE occurred_at >= ? ORDER BY occurred_at",
         (cutoff,)
     ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_current_and_recent_meds(recent_days: int = 30) -> list:
+    """
+    Get current medications + recent changes.
+    Returns: recent events (last N days) + the latest 'started' event for each medication.
+    This shows what's currently active plus recent changes.
+    """
+    conn = get_connection()
+    cutoff = (datetime.now() - timedelta(days=recent_days)).strftime("%Y-%m-%d")
+    rows = conn.execute("""
+        SELECT me.*
+        FROM medications me
+        WHERE me.occurred_at >= ?
+           OR (me.event_type = 'started' 
+               AND me.id = (SELECT id FROM medications me2 
+                            WHERE me2.medication = me.medication 
+                            ORDER BY occurred_at DESC LIMIT 1))
+        ORDER BY occurred_at DESC
+    """, (cutoff,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -421,106 +449,135 @@ def log_vital(vital_type: str, occurred_at: str | None = None,
     return result
 
 
-def get_recent_vitals(days_back: int = 0, vital_type: str | None = None) -> list | dict:
+def get_recent_vitals(days_back: int = 0, vital_type: str | None = None) -> str:
     """
-    Get vital signs.
-    - days_back > 0: Returns raw list of vitals from that period
-    - days_back = 0: Returns recent (30 days) detail + historical yearly summaries
+    Get vital signs as a compact text summary.
+    Returns pre-formatted summary for Claude to analyze without huge JSON.
     """
     conn = get_connection()
 
+    # Determine date range
     if days_back > 0:
-        # Simple case: just return vitals from the specified period
-        query = "SELECT * FROM vitals WHERE 1=1"
-        params = []
         cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        query += " AND occurred_at >= ?"
-        params.append(cutoff)
-        if vital_type:
-            query += " AND vital_type = ?"
-            params.append(vital_type)
-        rows = conn.execute(query + " ORDER BY occurred_at DESC", params).fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
-
-    # days_back = 0: Smart summarization
-    # Get recent 30 days in full detail
-    cutoff_30 = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-
-    query = "SELECT * FROM vitals WHERE occurred_at >= ?"
-    params = [cutoff_30]
-    if vital_type:
-        query += " AND vital_type = ?"
-        params.append(vital_type)
-    recent_rows = conn.execute(query + " ORDER BY occurred_at DESC", params).fetchall()
-    recent = [dict(r) for r in recent_rows]
-
-    # Get historical summaries by year (before the 30-day window)
-    if vital_type == "blood_pressure" or vital_type is None:
-        historical_bp = conn.execute("""
-            SELECT 
-                strftime('%Y', occurred_at) as year,
-                COUNT(*) as count,
-                ROUND(AVG(systolic), 0) as avg_systolic,
-                ROUND(AVG(diastolic), 0) as avg_diastolic,
-                ROUND(AVG(heart_rate), 0) as avg_hr,
-                MIN(systolic) as min_systolic,
-                MAX(systolic) as max_systolic,
-                MIN(diastolic) as min_diastolic,
-                MAX(diastolic) as max_diastolic
-            FROM vitals
-            WHERE vital_type = 'blood_pressure'
-              AND occurred_at < ?
-            GROUP BY strftime('%Y', occurred_at)
-            ORDER BY year DESC
-        """, (cutoff_30,)).fetchall()
-        bp_summary = [dict(r) for r in historical_bp]
     else:
-        bp_summary = []
+        cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
 
-    # Get historical summaries for other vital types
-    other_summaries = {}
-    if vital_type is None or (vital_type and vital_type != "blood_pressure"):
+    lines = []
+
+    # --- Blood Pressure ---
+    if vital_type is None or vital_type == "blood_pressure":
+        bp_rows = conn.execute("""
+            SELECT systolic, diastolic, heart_rate, occurred_at, notes
+            FROM vitals 
+            WHERE vital_type = 'blood_pressure' AND occurred_at >= ?
+            ORDER BY occurred_at DESC
+        """, (cutoff,)).fetchall()
+
+        if bp_rows:
+            lines.append("=== BLOOD PRESSURE ===")
+            # Recent readings (last 7)
+            lines.append("Recent readings:")
+            for row in bp_rows[:7]:
+                date = row["occurred_at"][:10]
+                note = f" ({row['notes'][:30]})" if row["notes"] else ""
+                lines.append(f"  {date}: {row['systolic']}/{row['diastolic']} HR:{row['heart_rate'] or '?'}{note}")
+
+            # Calculate stats for period
+            systolics = [r["systolic"] for r in bp_rows if r["systolic"]]
+            diastolics = [r["diastolic"] for r in bp_rows if r["diastolic"]]
+            if systolics:
+                lines.append(f"Period stats ({len(bp_rows)} readings):")
+                lines.append(f"  Avg: {sum(systolics)//len(systolics)}/{sum(diastolics)//len(diastolics)}")
+                lines.append(f"  Range: {min(systolics)}-{max(systolics)} / {min(diastolics)}-{max(diastolics)}")
+
+        # Historical baseline
+        hist_bp = conn.execute("""
+            SELECT strftime('%Y', occurred_at) as year,
+                   ROUND(AVG(systolic), 0) as avg_sys, ROUND(AVG(diastolic), 0) as avg_dia
+            FROM vitals WHERE vital_type = 'blood_pressure' AND occurred_at < ?
+            GROUP BY year ORDER BY year DESC LIMIT 3
+        """, (cutoff,)).fetchall()
+        if hist_bp:
+            lines.append("Historical baseline:")
+            for h in hist_bp:
+                lines.append(f"  {h['year']}: {int(h['avg_sys'])}/{int(h['avg_dia'])}")
+
+    # --- Weight ---
+    if vital_type is None or vital_type == "weight":
+        wt_rows = conn.execute("""
+            SELECT value, unit, occurred_at
+            FROM vitals 
+            WHERE vital_type = 'weight' AND occurred_at >= ?
+            ORDER BY occurred_at DESC
+        """, (cutoff,)).fetchall()
+
+        if wt_rows:
+            lines.append("\n=== WEIGHT ===")
+            lines.append("Recent readings:")
+            for row in wt_rows[:5]:
+                date = row["occurred_at"][:10]
+                lines.append(f"  {date}: {row['value']} {row['unit']}")
+
+            values = [r["value"] for r in wt_rows if r["value"]]
+            if values:
+                lines.append(f"Period: {min(values)}-{max(values)} {wt_rows[0]['unit']}")
+
+        # Historical
+        hist_wt = conn.execute("""
+            SELECT strftime('%Y', occurred_at) as year,
+                   ROUND(AVG(value), 1) as avg_val, unit
+            FROM vitals WHERE vital_type = 'weight' AND occurred_at < ?
+            GROUP BY year ORDER BY year DESC LIMIT 3
+        """, (cutoff,)).fetchall()
+        if hist_wt:
+            lines.append("Historical:")
+            for h in hist_wt:
+                lines.append(f"  {h['year']}: {h['avg_val']} {h['unit']}")
+
+    # --- Other vitals ---
+    if vital_type is None:
         other_rows = conn.execute("""
-            SELECT 
-                vital_type,
-                strftime('%Y', occurred_at) as year,
-                COUNT(*) as count,
-                ROUND(AVG(value), 1) as avg_value,
-                MIN(value) as min_value,
-                MAX(value) as max_value,
-                unit
-            FROM vitals
-            WHERE vital_type != 'blood_pressure'
-              AND occurred_at < ?
-              AND value IS NOT NULL
-            GROUP BY vital_type, strftime('%Y', occurred_at)
-            ORDER BY vital_type, year DESC
-        """, (cutoff_30,)).fetchall()
-        for row in other_rows:
-            vtype = row["vital_type"]
-            if vtype not in other_summaries:
-                other_summaries[vtype] = []
-            other_summaries[vtype].append(dict(row))
+            SELECT vital_type, value, unit, occurred_at, notes
+            FROM vitals 
+            WHERE vital_type NOT IN ('blood_pressure', 'weight') AND occurred_at >= ?
+            ORDER BY vital_type, occurred_at DESC
+        """, (cutoff,)).fetchall()
+
+        if other_rows:
+            current_type = None
+            for row in other_rows:
+                if row["vital_type"] != current_type:
+                    current_type = row["vital_type"]
+                    lines.append(f"\n=== {current_type.upper()} ===")
+                date = row["occurred_at"][:10]
+                note = f" ({row['notes'][:30]})" if row["notes"] else ""
+                lines.append(f"  {date}: {row['value']} {row['unit']}{note}")
+    elif vital_type and vital_type not in ("blood_pressure", "weight"):
+        other_rows = conn.execute("""
+            SELECT value, unit, occurred_at, notes
+            FROM vitals WHERE vital_type = ? AND occurred_at >= ?
+            ORDER BY occurred_at DESC
+        """, (vital_type, cutoff)).fetchall()
+
+        if other_rows:
+            lines.append(f"=== {vital_type.upper()} ===")
+            for row in other_rows[:10]:
+                date = row["occurred_at"][:10]
+                note = f" ({row['notes'][:30]})" if row["notes"] else ""
+                lines.append(f"  {date}: {row['value']} {row['unit']}{note}")
 
     conn.close()
 
-    result = {
-        "recent_30_days": recent,
-        "recent_count": len(recent)
-    }
+    if not lines:
+        return "No vitals found for this period."
 
-    if bp_summary:
-        result["historical_bp_by_year"] = bp_summary
-    if other_summaries:
-        result["historical_other_by_year"] = other_summaries
-
-    return result
+    return "\n".join(lines)
 
 
 # -- Labs Operations --
 
 def get_recent_labs(test_date: str | None = None) -> list:
+    """Get labs from a specific date or most recent date."""
     conn = get_connection()
     if test_date:
         rows = conn.execute(
@@ -532,6 +589,22 @@ def get_recent_labs(test_date: str | None = None) -> list:
         rows = conn.execute(
             "SELECT * FROM labs WHERE test_date = (SELECT MAX(test_date) FROM labs) ORDER BY status, test_name"
         ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_latest_labs_per_test() -> list:
+    """Get the most recent value for EACH test type (not just most recent date)."""
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT *
+        FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY test_name ORDER BY test_date DESC) as rn
+            FROM labs
+        )
+        WHERE rn = 1
+        ORDER BY test_date DESC, test_name
+    """).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -629,10 +702,31 @@ def get_recent_journal(days_back: int = 7) -> list[dict]:
 
 # --- Recipe Operations ---
 
-def save_recipe(name: str, ingredients: list[dict], notes: str | None = None) -> dict:
-    """Save or update a recipe."""
+def save_recipe(name: str, ingredients: list[dict], notes: str | None = None,
+                nutrition: dict | None = None, servings: float = 1) -> dict:
+    """
+    Save or update a recipe with pre-calculated per-serving nutrition.
+
+    If nutrition is provided from ingredients totals, it will be divided by servings
+    to get per-serving values.
+    """
     conn = get_connection()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Calculate nutrition from ingredients if not provided
+    if nutrition is None:
+        nutrition = {
+            "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0,
+            "vitamin_b12": 0, "vitamin_d": 0, "folate": 0, "iron": 0, "zinc": 0,
+            "magnesium": 0, "calcium": 0, "potassium": 0, "omega_3": 0,
+            "vitamin_a": 0, "vitamin_c": 0
+        }
+        for item in ingredients:
+            for key in nutrition:
+                nutrition[key] += item.get(key, 0)
+
+    # Divide by servings to get per-serving nutrition
+    per_serving = {k: v / servings for k, v in nutrition.items()}
 
     # Check if recipe exists (case-insensitive)
     existing = conn.execute(
@@ -641,15 +735,40 @@ def save_recipe(name: str, ingredients: list[dict], notes: str | None = None) ->
 
     if existing:
         conn.execute(
-            "UPDATE recipes SET ingredients = ?, notes = ? WHERE id = ?",
-            (json.dumps(ingredients), notes, existing["id"])
+            """UPDATE recipes SET ingredients = ?, notes = ?, servings = ?,
+               calories = ?, protein = ?, carbs = ?, fat = ?, fiber = ?,
+               vitamin_b12 = ?, vitamin_d = ?, folate = ?, iron = ?, zinc = ?,
+               magnesium = ?, calcium = ?, potassium = ?, omega_3 = ?,
+               vitamin_a = ?, vitamin_c = ?
+               WHERE id = ?""",
+            (json.dumps(ingredients), notes, servings,
+             per_serving.get("calories", 0), per_serving.get("protein", 0),
+             per_serving.get("carbs", 0), per_serving.get("fat", 0), per_serving.get("fiber", 0),
+             per_serving.get("vitamin_b12", 0), per_serving.get("vitamin_d", 0),
+             per_serving.get("folate", 0), per_serving.get("iron", 0), per_serving.get("zinc", 0),
+             per_serving.get("magnesium", 0), per_serving.get("calcium", 0),
+             per_serving.get("potassium", 0), per_serving.get("omega_3", 0),
+             per_serving.get("vitamin_a", 0), per_serving.get("vitamin_c", 0),
+             existing["id"])
         )
         recipe_id = existing["id"]
         action = "updated"
     else:
         cursor = conn.execute(
-            "INSERT INTO recipes (name, ingredients, notes, created_at) VALUES (?, ?, ?, ?)",
-            (name, json.dumps(ingredients), notes, timestamp)
+            """INSERT INTO recipes 
+               (name, ingredients, notes, created_at, servings,
+                calories, protein, carbs, fat, fiber,
+                vitamin_b12, vitamin_d, folate, iron, zinc,
+                magnesium, calcium, potassium, omega_3, vitamin_a, vitamin_c)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (name, json.dumps(ingredients), notes, timestamp, servings,
+             per_serving.get("calories", 0), per_serving.get("protein", 0),
+             per_serving.get("carbs", 0), per_serving.get("fat", 0), per_serving.get("fiber", 0),
+             per_serving.get("vitamin_b12", 0), per_serving.get("vitamin_d", 0),
+             per_serving.get("folate", 0), per_serving.get("iron", 0), per_serving.get("zinc", 0),
+             per_serving.get("magnesium", 0), per_serving.get("calcium", 0),
+             per_serving.get("potassium", 0), per_serving.get("omega_3", 0),
+             per_serving.get("vitamin_a", 0), per_serving.get("vitamin_c", 0))
         )
         recipe_id = cursor.lastrowid
         action = "created"
@@ -657,11 +776,15 @@ def save_recipe(name: str, ingredients: list[dict], notes: str | None = None) ->
     conn.commit()
     conn.close()
 
-    return {"id": recipe_id, "status": action, "name": name, "ingredients_count": len(ingredients)}
+    return {
+        "id": recipe_id, "status": action, "name": name, "servings": servings,
+        "per_serving": {"calories": round(per_serving.get("calories", 0)),
+                        "protein": round(per_serving.get("protein", 0))}
+    }
 
 
 def get_recipe(name: str) -> dict | None:
-    """Get a recipe by name (case-insensitive)."""
+    """Get a recipe by name (case-insensitive), including per-serving nutrition."""
     conn = get_connection()
     row = conn.execute(
         "SELECT * FROM recipes WHERE name = ? COLLATE NOCASE", (name,)
@@ -674,7 +797,26 @@ def get_recipe(name: str) -> dict | None:
             "name": row["name"],
             "ingredients": json.loads(row["ingredients"]),
             "notes": row["notes"],
-            "created_at": row["created_at"]
+            "created_at": row["created_at"],
+            "servings": row["servings"] or 1,
+            "nutrition": {
+                "calories": row["calories"] or 0,
+                "protein": row["protein"] or 0,
+                "carbs": row["carbs"] or 0,
+                "fat": row["fat"] or 0,
+                "fiber": row["fiber"] or 0,
+                "vitamin_b12": row["vitamin_b12"] or 0,
+                "vitamin_d": row["vitamin_d"] or 0,
+                "folate": row["folate"] or 0,
+                "iron": row["iron"] or 0,
+                "zinc": row["zinc"] or 0,
+                "magnesium": row["magnesium"] or 0,
+                "calcium": row["calcium"] or 0,
+                "potassium": row["potassium"] or 0,
+                "omega_3": row["omega_3"] or 0,
+                "vitamin_a": row["vitamin_a"] or 0,
+                "vitamin_c": row["vitamin_c"] or 0,
+            }
         }
     return None
 
@@ -701,8 +843,8 @@ def delete_recipe(name: str) -> dict:
 
 # --- Nutrition Summary Operations ---
 
-def get_nutrition_summary(days: int = 3) -> dict:
-    """Get nutrition totals and daily averages for the past N days."""
+def get_nutrition_summary(days: int = 3) -> str:
+    """Get nutrition totals and daily averages for the past N days as compact text."""
     conn = get_connection()
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -733,98 +875,82 @@ def get_nutrition_summary(days: int = 3) -> dict:
     conn.close()
 
     if not row or not row["days_with_data"]:
-        return {"days_with_data": 0, "message": "No nutrition data in this period"}
+        return f"No nutrition data in last {days} days"
 
-    days_with_data = row["days_with_data"]
+    d = row["days_with_data"]
+    def avg(v, decimals=0): return round(v / d, decimals) if v and d else 0
 
-    def safe_val(v):
-        return round(v, 1) if v else 0
+    lines = [f"=== NUTRITION ({d} days with data) ==="]
+    lines.append(f"Daily avg: {avg(row['total_calories'])} cal, {avg(row['total_protein'])}g protein, {avg(row['total_carbs'])}g carbs, {avg(row['total_fat'])}g fat, {avg(row['total_fiber'])}g fiber")
+    lines.append(f"Micros avg: B12:{avg(row['total_b12'], 1)}μg, D:{avg(row['total_d'])}IU, folate:{avg(row['total_folate'])}μg, iron:{avg(row['total_iron'], 1)}mg, zinc:{avg(row['total_zinc'], 1)}mg")
+    lines.append(f"  Mg:{avg(row['total_magnesium'])}mg, Ca:{avg(row['total_calcium'])}mg, K:{avg(row['total_potassium'])}mg, ω3:{avg(row['total_omega_3'], 1)}g, A:{avg(row['total_vitamin_a'])}IU, C:{avg(row['total_vitamin_c'])}mg")
+    return "\n".join(lines)
 
-    def safe_avg(v):
-        return round(safe_val(v) / days_with_data, 1) if days_with_data else 0
 
-    return {
-        "period_days": days,
-        "days_with_data": days_with_data,
-        "totals": {
-            "calories": safe_val(row["total_calories"]),
-            "protein": safe_val(row["total_protein"]),
-            "carbs": safe_val(row["total_carbs"]),
-            "fat": safe_val(row["total_fat"]),
-            "fiber": safe_val(row["total_fiber"]),
-            "vitamin_b12": safe_val(row["total_b12"]),
-            "vitamin_d": safe_val(row["total_d"]),
-            "folate": safe_val(row["total_folate"]),
-            "iron": safe_val(row["total_iron"]),
-            "zinc": safe_val(row["total_zinc"]),
-            "magnesium": safe_val(row["total_magnesium"]),
-            "calcium": safe_val(row["total_calcium"]),
-            "potassium": safe_val(row["total_potassium"]),
-            "omega_3": safe_val(row["total_omega_3"]),
-            "vitamin_a": safe_val(row["total_vitamin_a"]),
-            "vitamin_c": safe_val(row["total_vitamin_c"]),
-        },
-        "daily_averages": {
-            "calories": safe_avg(row["total_calories"]),
-            "protein": safe_avg(row["total_protein"]),
-            "carbs": safe_avg(row["total_carbs"]),
-            "fat": safe_avg(row["total_fat"]),
-            "fiber": safe_avg(row["total_fiber"]),
-            "vitamin_b12": safe_avg(row["total_b12"]),
-            "vitamin_d": safe_avg(row["total_d"]),
-            "folate": safe_avg(row["total_folate"]),
-            "iron": safe_avg(row["total_iron"]),
-            "zinc": safe_avg(row["total_zinc"]),
-            "magnesium": safe_avg(row["total_magnesium"]),
-            "calcium": safe_avg(row["total_calcium"]),
-            "potassium": safe_avg(row["total_potassium"]),
-            "omega_3": safe_avg(row["total_omega_3"]),
-            "vitamin_a": safe_avg(row["total_vitamin_a"]),
-            "vitamin_c": safe_avg(row["total_vitamin_c"]),
-        }
+def get_nutrition_alerts(days: int = 3) -> str:
+    """Check for nutrient deficiencies based on RDA values. Returns compact text."""
+    conn = get_connection()
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+    row = conn.execute("""
+        SELECT 
+            COUNT(DISTINCT DATE(m.occurred_at)) as days_with_data,
+            SUM(mn.calories) as total_calories,
+            SUM(mn.protein) as total_protein,
+            SUM(mn.carbs) as total_carbs,
+            SUM(mn.fat) as total_fat,
+            SUM(mn.fiber) as total_fiber,
+            SUM(mn.vitamin_b12) as total_b12,
+            SUM(mn.vitamin_d) as total_d,
+            SUM(mn.folate) as total_folate,
+            SUM(mn.iron) as total_iron,
+            SUM(mn.zinc) as total_zinc,
+            SUM(mn.magnesium) as total_magnesium,
+            SUM(mn.calcium) as total_calcium,
+            SUM(mn.potassium) as total_potassium,
+            SUM(mn.omega_3) as total_omega_3,
+            SUM(mn.vitamin_a) as total_vitamin_a,
+            SUM(mn.vitamin_c) as total_vitamin_c
+        FROM meals m
+        JOIN meal_nutrition mn ON m.id = mn.meal_id
+        WHERE m.occurred_at >= ?
+    """, (cutoff,)).fetchone()
+    conn.close()
+
+    if not row or not row["days_with_data"]:
+        return "No nutrition data to analyze"
+
+    d = row["days_with_data"]
+
+    # Calculate daily averages
+    daily_avg = {
+        "calories": (row["total_calories"] or 0) / d,
+        "protein": (row["total_protein"] or 0) / d,
+        "fiber": (row["total_fiber"] or 0) / d,
+        "vitamin_b12": (row["total_b12"] or 0) / d,
+        "vitamin_d": (row["total_d"] or 0) / d,
+        "folate": (row["total_folate"] or 0) / d,
+        "iron": (row["total_iron"] or 0) / d,
+        "zinc": (row["total_zinc"] or 0) / d,
+        "magnesium": (row["total_magnesium"] or 0) / d,
+        "calcium": (row["total_calcium"] or 0) / d,
+        "potassium": (row["total_potassium"] or 0) / d,
+        "omega_3": (row["total_omega_3"] or 0) / d,
+        "vitamin_a": (row["total_vitamin_a"] or 0) / d,
+        "vitamin_c": (row["total_vitamin_c"] or 0) / d,
     }
 
-
-def get_nutrition_alerts(days: int = 3) -> list[dict]:
-    """Check for nutrient deficiencies and excesses based on RDA values."""
-    summary = get_nutrition_summary(days)
-
-    if summary.get("days_with_data", 0) == 0:
-        return []
-
     alerts = []
-    daily_avg = summary["daily_averages"]
-
     for nutrient, target_info in RDA_TARGETS.items():
         actual = daily_avg.get(nutrient, 0)
         target = target_info["target"]
-        upper_limit = target_info.get("upper_limit")
         pct = (actual / target) * 100 if target > 0 else 0
 
-        # Check for deficiency
         if pct < 70:
-            alerts.append({
-                "nutrient": nutrient,
-                "daily_average": actual,
-                "target": target,
-                "unit": target_info["unit"],
-                "percent_of_rda": round(pct, 1),
-                "severity": "low" if pct >= 50 else "very_low",
-                "type": "deficiency"
-            })
+            severity = "LOW" if pct >= 50 else "VERY LOW"
+            alerts.append(f"{nutrient}: {int(pct)}% of RDA ({severity})")
 
-        # Check for excess (only for nutrients with upper limits)
-        if upper_limit and actual > upper_limit:
-            pct_of_limit = (actual / upper_limit) * 100
-            alerts.append({
-                "nutrient": nutrient,
-                "daily_average": actual,
-                "upper_limit": upper_limit,
-                "unit": target_info["unit"],
-                "percent_of_upper_limit": round(pct_of_limit, 1),
-                "severity": "high" if pct_of_limit < 150 else "very_high",
-                "type": "excess"
-            })
+    if not alerts:
+        return "No nutrition alerts"
 
-    # Sort: excesses first (more urgent), then deficiencies by percent
-    return sorted(alerts, key=lambda x: (x["type"] == "deficiency", x.get("percent_of_rda", 0)))
+    return "=== NUTRITION ALERTS ===\n" + "\n".join(alerts)

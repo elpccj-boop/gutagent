@@ -75,7 +75,7 @@ TOOLS = [
                 },
                 "description": {
                     "type": "string",
-                    "description": "Natural language description of the meal"
+                    "description": "Just the food items eaten (e.g., 'Chicken curry with rice'). Do NOT include meal type or time — those go in meal_type and occurred_at."
                 },
                 "items": {
                     "type": "array",
@@ -111,10 +111,6 @@ TOOLS = [
                             "omega_3": {"type": "number", "description": "Omega-3 fatty acids in g"},
                             "vitamin_a": {"type": "number", "description": "Vitamin A in μg"},
                             "vitamin_c": {"type": "number", "description": "Vitamin C in mg"},
-                            "is_spice": {
-                                "type": "boolean",
-                                "description": "True if this is a spice (turmeric, cumin, etc.)"
-                            }
                         },
                         "required": ["name", "calories", "protein", "carbs", "fat"]
                     }
@@ -127,9 +123,9 @@ TOOLS = [
                     "type": "string",
                     "description": (
                         "When the meal actually happened, in YYYY-MM-DD HH:MM:SS format. "
-                        "Infer from context — 'yesterday lunch' becomes yesterday's date at 12:30, "
-                        "'this morning' becomes today at 08:00, etc. "
-                        "Leave out if the meal is happening right now."
+                        "ALWAYS provide this with meal-appropriate times: breakfast=08:00, lunch=12:30, dinner=19:30, snack=16:00. "
+                        "Examples: 'today's lunch' → today at 12:30, 'yesterday dinner' → yesterday at 19:30. "
+                        "Only omit if user says 'just now' or 'right now'."
                     )
                 },
             },
@@ -298,7 +294,7 @@ TOOLS = [
                 },
                 "table": {
                     "type": "string",
-                    "enum": ["meals", "symptoms", "vitals", "medication_events", "sleep", "exercise", "journal"],
+                    "enum": ["meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal"],
                     "description": "Which table to search. Used with date_search. Default is meals."
                 }
             },
@@ -306,43 +302,43 @@ TOOLS = [
         }
     },
     {
+            "name": "correct_log",
+            "description": (
+                "Update or delete an existing log entry. Use when the user wants to fix "
+                "a value (like severity, timestamp, description) or remove a duplicate. "
+                "Never create a new entry when a correction is needed."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["update", "delete"],
+                        "description": "Whether to update fields or delete the entry"
+                    },
+                    "table": {
+                        "type": "string",
+                        "enum": ["meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal"],
+                        "description": "Which table the entry is in"
+                    },
+                    "entry_id": {
+                        "type": "integer",
+                        "description": "The id of the entry to correct"
+                    },
+                    "updates": {
+                        "type": "object",
+                        "description": "Fields to update with new values. Only for action=update. Use column names: severity, occurred_at, description, notes, symptom, meal_type, systolic, diastolic, heart_rate, medication, event_type, dose, etc."
+                    }
+                },
+                "required": ["action", "table", "entry_id"]
+            }
+        },
+    {
         "name": "get_profile",
         "description": "Retrieve the user's full medical profile.",
         "input_schema": {
             "type": "object",
             "properties": {}
-        }
-    },
-    {
-        "name": "correct_log",
-        "description": (
-            "Update or delete an existing log entry. Use when the user wants to fix "
-            "a value (like severity, timestamp, description) or remove a duplicate. "
-            "Never create a new entry when a correction is needed."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["update", "delete"],
-                    "description": "Whether to update fields or delete the entry"
-                },
-                "table": {
-                    "type": "string",
-                    "enum": ["meals", "symptoms", "vitals", "medication_events", "sleep", "exercise", "journal"],
-                    "description": "Which table the entry is in"
-                },
-                "entry_id": {
-                    "type": "integer",
-                    "description": "The id of the entry to correct"
-                },
-                "updates": {
-                    "type": "object",
-                    "description": "Fields to update with new values. Only for action=update. Use column names: severity, occurred_at, description, notes, symptom, meal_type, systolic, diastolic, heart_rate, medication, event_type, dose, etc."
-                }
-            },
-            "required": ["action", "table", "entry_id"]
         }
     },
     {
@@ -465,19 +461,23 @@ TOOLS = [
     {
         "name": "save_recipe",
         "description": (
-            "Save a recipe for a dish the user makes often. Saved recipes enable accurate "
-            "nutrition and spice tracking. Use when the user describes ingredients for a dish."
+            "Save a recipe the user makes often. Provide total nutrition for all ingredients, "
+            "and specify how many servings it makes. Per-serving nutrition is calculated automatically."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Name of the recipe (e.g., 'chicken curry', 'dal tadka')"
+                    "description": "Name of the recipe (e.g., 'masala tea', 'chicken curry')"
+                },
+                "servings": {
+                    "type": "number",
+                    "description": "How many servings this recipe makes (e.g., 3 cups of tea, 4 portions of curry). Default 1."
                 },
                 "ingredients": {
                     "type": "array",
-                    "description": "List of ingredients with nutrition",
+                    "description": "Ingredients used in the recipe with their nutrition (e.g., 1 cup milk = 150 cal, 8g protein).",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -500,7 +500,6 @@ TOOLS = [
                             "omega_3": {"type": "number"},
                             "vitamin_a": {"type": "number"},
                             "vitamin_c": {"type": "number"},
-                            "is_spice": {"type": "boolean"}
                         },
                         "required": ["name", "calories", "protein", "carbs", "fat"]
                     }

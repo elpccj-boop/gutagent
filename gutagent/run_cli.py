@@ -35,7 +35,7 @@ def print_welcome_long():
         console.print(Panel(
   "[bold green]GutAgent[/bold green] — Your Personalized Dietary Assistant\n\n"
             "Tell me what you ate, how you're feeling, or ask for meal suggestions.\n"
-            "Type [bold]quit[/bold] or [bold]exit[/bold] to end the session.\n\n"
+            "Type [bold]q[/bold] or [bold]quit[/bold] or [bold]x[/bold] or [bold]exit[/bold] to end the session.\n\n"
             "[bold]Commands:[/bold]\n"
             "  --verbose  Show tool calls\n"
             "  --quiet    Hide tool calls (default)\n"
@@ -62,7 +62,7 @@ def print_welcome_long():
         print("=" * 60)
         print("  Tell me what you ate, how you're feeling,")
         print("  or ask for meal suggestions.")
-        print("  Type 'quit' or 'exit' to end.")
+        print("  Type 'q' or 'quit' or 'x' or 'exit' to end.")
         print()
         print("  Commands:")
         print("    --verbose  Show tool calls")
@@ -126,7 +126,8 @@ def main():
         print("Creating a minimal profile to get started...\n")
         profile = {"note": "No profile loaded. Responses will be generic."}
     
-    conversation_history = []
+    recent_logs = {}  # Tracks recently logged entries for edit context
+    last_exchange = {}  # Tracks last Q&A for follow-up context
     verbose = False
     current_tier = "default"  # "default" or "smart"
 
@@ -146,7 +147,7 @@ def main():
         if not user_input:
             continue
         
-        if user_input.lower() in ("quit", "exit", "bye"):
+        if user_input.lower() in ("q", "quit", "x", "exit", "bye"):
             print("Goodbye! Remember to eat well. 💚")
             break
         
@@ -173,10 +174,28 @@ def main():
             continue
         
         try:
-            response = run_agent(
+            if verbose:
+                print(f"\n--- INPUT TO AGENT ---")
+                if last_exchange:
+                    user_preview = last_exchange.get('user', '')[:50]
+                    asst_preview = last_exchange.get('assistant', '')[:50]
+                    asst_len = len(last_exchange.get('assistant', ''))
+                    print(f"  [last_exchange.user: {user_preview}...]")
+                    print(f"  [last_exchange.assistant ({asst_len} chars, max 500): {asst_preview}...]")
+                else:
+                    print(f"  [last_exchange: (empty)]")
+                if recent_logs:
+                    for table, entries in recent_logs.items():
+                        print(f"  [recent_logs.{table}: {len(entries)} entries]")
+                else:
+                    print(f"  [recent_logs: (empty)]")
+
+            response, recent_logs, last_exchange = run_agent(
                 user_message=user_input,
-                conversation_history=conversation_history,
+                conversation_history=[],  # Not used, kept for compatibility
                 profile=profile,
+                recent_logs=recent_logs,
+                last_exchange=last_exchange,
                 verbose=verbose,
                 model=get_model_for_tier(current_tier),
             )

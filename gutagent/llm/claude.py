@@ -94,7 +94,7 @@ class ClaudeProvider(BaseLLMProvider):
             if cache_read or cache_create:
                 # Cache hit: cache_read > 0, Cache miss (first call): cache_create > 0
                 pass  # Uncomment below to debug:
-                print(f"  [Cache] read: {cache_read}, created: {cache_create}, input: {usage.input_tokens}")
+                print(f"  [Cache] read: {cache_read}, created: {cache_create}, input: {usage.input_tokens}, output: {usage.output_tokens}")
 
         # Convert to standard format
         content = []

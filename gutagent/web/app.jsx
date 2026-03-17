@@ -1,6 +1,6 @@
 const { useState, useEffect, useRef, useCallback } = React;
 
-// Generate a session ID
+// Generate a session ID for tracking recent_logs/last_exchange (for corrections)
 const SESSION_ID = localStorage.getItem('gutagent_session') || 
     (() => {
         const id = 'session_' + Math.random().toString(36).substr(2, 9);
@@ -131,23 +131,6 @@ function SettingsPanel({ isOpen, onClose, settings, onSettingsChange }) {
                         </button>
                     </div>
                 </div>
-                
-                {/* Clear conversation */}
-                <button
-                    onClick={async () => {
-                        await fetch('/api/clear', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ session_id: SESSION_ID }),
-                        });
-                        localStorage.removeItem('gutagent_messages');
-                        window.location.reload();
-                    }}
-                    className="mt-6 w-full py-2.5 text-red-600 border border-red-200 rounded-lg 
-                             hover:bg-red-50 transition text-sm font-medium"
-                >
-                    Clear Conversation
-                </button>
             </div>
         </div>
     );
