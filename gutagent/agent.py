@@ -49,7 +49,6 @@ def format_recent_logs(recent_logs: dict) -> str:
 
 def run_agent(
     user_message: str,
-    conversation_history: list,  # Kept for API compatibility, not used
     profile: dict,
     recent_logs: dict = None,  # Tracks recently logged entries per table
     last_exchange: dict = None,  # Last user Q + assistant response for context

@@ -528,7 +528,7 @@ TOOLS = [
     },
     {
         "name": "list_recipes",
-        "description": "List all saved recipes.",
+        "description": "List all saved recipes with per-serving nutrition.",
         "input_schema": {
             "type": "object",
             "properties": {}

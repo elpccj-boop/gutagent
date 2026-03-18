@@ -192,7 +192,6 @@ def main():
 
             response, recent_logs, last_exchange = run_agent(
                 user_message=user_input,
-                conversation_history=[],  # Not used, kept for compatibility
                 profile=profile,
                 recent_logs=recent_logs,
                 last_exchange=last_exchange,

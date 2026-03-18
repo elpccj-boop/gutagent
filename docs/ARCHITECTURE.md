@@ -662,7 +662,7 @@ Saved recipes enable consistent nutrition tracking for repeated dishes:
 | `update_profile` | Add/modify profile data (conditions, suggestions, etc.) |
 | `save_recipe` | Save a recipe with ingredients and per-serving nutrition |
 | `get_recipe` | Retrieve a saved recipe with nutrition |
-| `list_recipes` | List all saved recipes |
+| `list_recipes` | List all saved recipes with per-serving nutrition |
 | `delete_recipe` | Delete a saved recipe |
 | `get_nutrition_summary` | Get nutrition totals and daily averages |
 | `get_nutrition_alerts` | Get deficiency and excess alerts |

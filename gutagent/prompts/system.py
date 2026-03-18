@@ -144,11 +144,40 @@ def get_dynamic_context() -> str:
     except Exception:
         pass
 
-    # Recipes - names only
+    # Recipes - with per-serving nutrition (so LLM doesn't need to call get_recipe)
     try:
         recipes = list_recipes()
         if recipes:
-            sections.append("## Recipes: " + ", ".join(r['name'] for r in recipes))
+            lines = ["## Recipes (per serving)"]
+            for r in recipes:
+                nutr = r.get('nutrition', {})
+
+                # Compact format: name (servings) | macros | key micros
+                cal = int(nutr.get('calories') or 0)
+                pro = int(nutr.get('protein') or 0)
+                carb = int(nutr.get('carbs') or 0)
+                fat = int(nutr.get('fat') or 0)
+                macros = f"{cal}cal {pro}p {carb}c {fat}f"
+
+                micros = []
+                if nutr.get('vitamin_b12'): micros.append(f"B12:{nutr['vitamin_b12']:.1f}")
+                if nutr.get('vitamin_d'): micros.append(f"D:{int(nutr['vitamin_d'])}")
+                if nutr.get('iron'): micros.append(f"Fe:{nutr['iron']:.1f}")
+                if nutr.get('calcium'): micros.append(f"Ca:{int(nutr['calcium'])}")
+                if nutr.get('omega_3'): micros.append(f"ω3:{nutr['omega_3']:.1f}")
+                if nutr.get('folate'): micros.append(f"fol:{int(nutr['folate'])}")
+                if nutr.get('zinc'): micros.append(f"Zn:{nutr['zinc']:.1f}")
+                if nutr.get('magnesium'): micros.append(f"Mg:{int(nutr['magnesium'])}")
+                if nutr.get('potassium'): micros.append(f"K:{int(nutr['potassium'])}")
+                if nutr.get('vitamin_a'): micros.append(f"A:{int(nutr['vitamin_a'])}")
+                if nutr.get('vitamin_c'): micros.append(f"C:{int(nutr['vitamin_c'])}")
+                if nutr.get('fiber'): micros.append(f"fib:{int(nutr['fiber'])}")
+
+                micro_str = " ".join(micros) if micros else ""
+                srv = r.get('servings') or 1
+                servings = int(srv) if srv == int(srv) else srv
+                lines.append(f"- {r['name']} ({servings}srv): {macros} | {micro_str}")
+            sections.append("\n".join(lines))
     except Exception:
         pass
 
@@ -187,9 +216,8 @@ knowledgeable friend who happens to understand IBD nutrition deeply.
 
 PROACTIVE LOGGING:
 - When the user mentions eating ANYTHING, call log_meal immediately — even casual mentions
-- RECIPE MATCHING IS CRITICAL: Before estimating nutrition, ALWAYS check if any part of the meal matches a saved recipe
-- Use list_recipes to see available recipes if unsure
-- If a dish matches a saved recipe, use recipe_name parameter — this ensures accurate nutrition
+- RECIPE MATCHING IS CRITICAL: Check the Recipes section in dynamic context for saved recipes with nutrition
+- If a dish matches a saved recipe, use recipe_name parameter and copy the recipe's nutrition values
 - For meals with multiple items (e.g., "sev and masala tea"), check each item against recipes
 - Only estimate nutrition for items that don't have saved recipes
 - When the user mentions ANY physical or mental symptom, call log_symptom immediately
@@ -213,12 +241,12 @@ MEAL TIMESTAMPS — ALWAYS SET occurred_at:
 - NEVER omit occurred_at — always pass it explicitly
 
 NUTRITION TRACKING:
-- RECIPES FIRST: Always check saved recipes before estimating. Recipes have carefully calculated nutrition.
+- RECIPES FIRST: Always check saved recipes before estimating. Recipes have pre-calculated per-serving nutrition.
 - For items without recipes, estimate nutrition directly using your knowledge
 - Track both macros (calories, protein, carbs, fat, fiber) AND micronutrients (B12, D, folate, iron, zinc, magnesium, calcium, potassium, omega-3, vitamin A, vitamin C)
 - ALWAYS estimate micronutrients — they are critical for this patient. Don't leave them as zero.
 - Provide reasonable estimates even for regional/ethnic foods
-- Example: "mutton curry with rice" → if "mutton curry" recipe exists, use it; estimate rice separately
+- Example: "mutton curry with rice" → if "Mutton curry" recipe exists in context, use its nutrition; estimate rice separately
 - Include brief nutrition summary when logging meals (e.g., "~450 cal, 32g protein")
 - When discussing nutrition, proactively mention any alerts if relevant
 - Offer to save recipes when the user describes dishes they eat often

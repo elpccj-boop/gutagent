@@ -247,25 +247,25 @@ gutagent_project/
 
 ## Tools
 
-| Tool | What it does |
-|------|--------------|
-| `log_meal` | Log what you ate with nutrition estimates |
-| `log_symptom` | Log symptoms with severity |
-| `log_vital` | Log BP, weight, temperature, etc. |
-| `log_medication_event` | Track medication starts, stops, changes |
-| `log_sleep` | Log sleep hours and quality |
-| `log_exercise` | Log physical activity |
-| `log_journal` | Freeform notes and life events |
+| Tool | What it does                                                |
+|------|-------------------------------------------------------------|
+| `log_meal` | Log what you ate with nutrition estimates                   |
+| `log_symptom` | Log symptoms with severity                                  |
+| `log_vital` | Log BP, weight, temperature, etc.                           |
+| `log_medication_event` | Track medication starts, stops, changes                     |
+| `log_sleep` | Log sleep hours and quality                                 |
+| `log_exercise` | Log physical activity                                       |
+| `log_journal` | Freeform notes and life events                              |
 | `query_logs` | Search meals, symptoms, vitals, meds, labs, sleep, exercise |
-| `get_profile` | Retrieve your medical profile |
-| `correct_log` | Fix or delete logged entries |
-| `update_profile` | Add/update profile data conversationally |
-| `save_recipe` | Save a recipe with ingredients and per-serving nutrition |
-| `get_recipe` | Retrieve a saved recipe with nutrition |
-| `list_recipes` | List all saved recipes |
-| `delete_recipe` | Delete a recipe |
-| `get_nutrition_summary` | Get nutrition totals and averages |
-| `get_nutrition_alerts` | Get deficiency and excess alerts |
+| `get_profile` | Retrieve your medical profile                               |
+| `correct_log` | Fix or delete logged entries                                |
+| `update_profile` | Add/update profile data conversationally                    |
+| `save_recipe` | Save a recipe with ingredients and per-serving nutrition    |
+| `get_recipe` | Retrieve a saved recipe with nutrition                      |
+| `list_recipes` | List all saved recipes with per-serving nutrition           |
+| `delete_recipe` | Delete a recipe                                             |
+| `get_nutrition_summary` | Get nutrition totals and averages                           |
+| `get_nutrition_alerts` | Get deficiency and excess alerts                            |
 
 ## Nutrition Tracking
 

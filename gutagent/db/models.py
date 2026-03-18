@@ -822,13 +822,45 @@ def get_recipe(name: str) -> dict | None:
 
 
 def list_recipes() -> list[dict]:
-    """List all saved recipes."""
+    """List all saved recipes with per-serving nutrition."""
     conn = get_connection()
-    rows = conn.execute(
-        "SELECT id, name, notes, created_at FROM recipes ORDER BY name"
-    ).fetchall()
+    rows = conn.execute("""
+        SELECT id, name, notes, created_at, servings,
+               calories, protein, carbs, fat, fiber,
+               vitamin_b12, vitamin_d, folate, iron, zinc, magnesium,
+               calcium, potassium, omega_3, vitamin_a, vitamin_c
+        FROM recipes ORDER BY name
+    """).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+
+    recipes = []
+    for r in rows:
+        recipes.append({
+            "id": r["id"],
+            "name": r["name"],
+            "notes": r["notes"],
+            "created_at": r["created_at"],
+            "servings": r["servings"] or 1,
+            "nutrition": {
+                "calories": r["calories"] or 0,
+                "protein": r["protein"] or 0,
+                "carbs": r["carbs"] or 0,
+                "fat": r["fat"] or 0,
+                "fiber": r["fiber"] or 0,
+                "vitamin_b12": r["vitamin_b12"] or 0,
+                "vitamin_d": r["vitamin_d"] or 0,
+                "folate": r["folate"] or 0,
+                "iron": r["iron"] or 0,
+                "zinc": r["zinc"] or 0,
+                "magnesium": r["magnesium"] or 0,
+                "calcium": r["calcium"] or 0,
+                "potassium": r["potassium"] or 0,
+                "omega_3": r["omega_3"] or 0,
+                "vitamin_a": r["vitamin_a"] or 0,
+                "vitamin_c": r["vitamin_c"] or 0,
+            }
+        })
+    return recipes
 
 
 def delete_recipe(name: str) -> dict:
