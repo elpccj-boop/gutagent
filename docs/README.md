@@ -5,12 +5,12 @@ A personalized dietary AI agent for managing inflammatory bowel disease. Built w
 ## What it does
 
 - **Knows your medical profile** — conditions, triggers, medications, labs
-- **Logs everything naturally** — meals, symptoms, vitals, sleep, exercise, journal
-- **Tracks nutrition** — calories, protein, and 11 micronutrients for every meal
+- **Logs everything naturally** — meals, symptoms, vitals, labs, sleep, exercise, journal
+- **Tracks nutrition** — macros (calories, protein, fat, carbs, fiber) and 11 micronutrients for every meal
 - **Alerts on deficiencies and excesses** — warns when nutrients fall below recommended levels or exceed safe limits
 - **Finds patterns** — Claude interprets your data to identify correlations
 - **Remembers what matters** — save test suggestions, update your profile conversationally
-- **Saves recipes with nutrition** — track nutrition consistently for dishes you eat often; recipes store per-serving nutrition
+- **Saves recipes with nutrition** — track nutrition consistently for dishes eaten often; recipes store per-serving nutrition
 - **Works anywhere** — CLI for terminal, mobile-friendly web UI for on-the-go
 - **Multiple LLM providers** — Claude, Gemini, OpenAI, Groq, or local Ollama
 
@@ -47,30 +47,31 @@ python -m gutagent.run_web
 
 GutAgent supports multiple LLM providers. Set `LLM_PROVIDER` in your `.env` file:
 
-| Provider | Status | Cost | Notes |
-|----------|--------|------|-------|
-| `claude` | ✅ Best | Paid (~$0.002-0.02/msg) | Best reasoning and tool calling |
-| `gemini` | ✅ Recommended | Free tier | Good quality, generous free tier |
-| `openai` | ✅ Works | Paid (~$0.002-0.02/msg) | Good quality |
-| `groq` | ⚠️ Limited | Free tier | May hit token limits with full system prompt |
+| Provider | Status | Cost      | Notes                                           |
+|----------|--------|-----------|-------------------------------------------------|
+| `claude` | ✅ Best | Paid (~$0.002-0.02/msg) | Best reasoning and tool calling                 |
+| `openai` | ✅ Works | Paid (~$0.002-0.02/msg) | Good quality                                    |
+| `gemini` | ⚠️ Limiting | Free tier | Good quality, free tier runs out fast           |
+| `groq` | ⚠️ Doesn't work | Free tier | Unable to handlle full system prompt            |
 | `ollama` | ⚠️ Unreliable | Free (local) | Small models struggle with complex tool calling |
 
 ### Setup by Provider
 
-**Gemini (Recommended free option):**
+**Claude:**
+```bash
+pip install anthropic
+# Add to .env:
+LLM_PROVIDER=claude
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+```
+
+**Gemini:**
 ```bash
 pip install google-genai
 # Get API key at https://makersuite.google.com/app/apikey
 # Add to .env:
 LLM_PROVIDER=gemini
 GOOGLE_API_KEY=your_key_here
-```
-
-**Claude:**
-```bash
-# Add to .env:
-LLM_PROVIDER=claude
-ANTHROPIC_API_KEY=sk-ant-your-key-here
 ```
 
 **OpenAI:**
@@ -120,6 +121,10 @@ You: I had chicken with lettuce and tomato for lunch
 GutAgent: Logged lunch: chicken, lettuce, tomato (~380 cal, 35g protein). 
          Good protein and vitamin C from the tomato!
 
+You: Had masala tea for breakfast
+GutAgent: Logged breakfast using your Masala tea recipe — 52 cal, 2.7g protein, 
+         good calcium from the milk.
+         
 You: I'm feeling bloated, about a 5
 GutAgent: Logged bloating (severity 5). You had sev for breakfast — that's chickpea 
          flour, which has been triggering bloating consistently for you.
@@ -134,6 +139,9 @@ GutAgent: Nice! Logged your walk. That's your first exercise entry this week.
 You: My BP this morning was 128/82 pulse 68
 GutAgent: Logged — 128/82, HR 68. That's better than your readings last week.
 
+You: My ELF test score is 8.45.
+GutAgent: Logged — ELF score 8.45. That's great score with no risk of cirrhosis.
+
 You: How's my nutrition lately?
 GutAgent: Over the last 3 days: averaging 1800 cal, 85g protein. You're a bit 
          low on vitamin C (45% of target) — might want to add some citrus or 
@@ -141,10 +149,6 @@ GutAgent: Over the last 3 days: averaging 1800 cal, 85g protein. You're a bit
 
 You: Remember that I have hypohidrosis — I barely sweat
 GutAgent: Added to your profile under chronic conditions. I'll keep this in mind.
-
-You: Had masala tea for breakfast
-GutAgent: Logged breakfast using your Masala tea recipe — 52 cal, 2.7g protein, 
-         good calcium from the milk.
 ```
 
 ## Running the App
@@ -232,7 +236,7 @@ gutagent_project/
 ├── data/
 │   ├── profile.json         # Your medical profile (gitignored)
 │   ├── profile_template.json
-│   └── gutagent.db          # SQLite database (auto-created)
+│   └── gutagent.db          # SQLite database (auto-created and gitignored)
 ├── docs/
 │   ├── README.md
 │   ├── ARCHITECTURE.md           # Detailed technical documentation
@@ -247,25 +251,26 @@ gutagent_project/
 
 ## Tools
 
-| Tool | What it does                                                |
-|------|-------------------------------------------------------------|
-| `log_meal` | Log what you ate with nutrition estimates                   |
-| `log_symptom` | Log symptoms with severity                                  |
-| `log_vital` | Log BP, weight, temperature, etc.                           |
-| `log_medication_event` | Track medication starts, stops, changes                     |
-| `log_sleep` | Log sleep hours and quality                                 |
-| `log_exercise` | Log physical activity                                       |
-| `log_journal` | Freeform notes and life events                              |
-| `query_logs` | Search meals, symptoms, vitals, meds, labs, sleep, exercise |
-| `get_profile` | Retrieve your medical profile                               |
-| `correct_log` | Fix or delete logged entries                                |
-| `update_profile` | Add/update profile data conversationally                    |
-| `save_recipe` | Save a recipe with ingredients and per-serving nutrition    |
-| `get_recipe` | Retrieve a saved recipe with nutrition                      |
-| `list_recipes` | List all saved recipes with per-serving nutrition           |
-| `delete_recipe` | Delete a recipe                                             |
-| `get_nutrition_summary` | Get nutrition totals and averages                           |
-| `get_nutrition_alerts` | Get deficiency and excess alerts                            |
+| Tool                    | What it does                                                         |
+|-------------------------|----------------------------------------------------------------------|
+| `log_meal`              | Log what you ate with nutrition estimates                            |
+| `log_symptom`           | Log symptoms with severity                                           |
+| `log_vital`             | Log BP, weight, temperature, etc.                                    |
+| `log_lab`               | Log ESR, Hemoblobin, TSH, CRP, etc.                                  |
+| `log_medication_event`  | Track medication starts, stops, dose change                          | 
+| `log_sleep`             | Log sleep hours and quality                                          |
+| `log_exercise`          | Log physical activity                                                |
+| `log_journal`           | Freeform notes and life events                                       |
+| `query_logs`            | Search meals, symptoms, vitals, labs, meds, sleep, exercise, journal |
+| `get_profile`           | Retrieve your medical profile                                        |
+| `correct_log`           | Fix or delete logged entries                                         |
+| `update_profile`        | Add/update profile data conversationally                             |
+| `save_recipe`           | Save a recipe with ingredients and per-serving nutrition             |
+| `get_recipe`            | Retrieve a saved recipe with nutrition                               |
+| `list_recipes`          | List all saved recipes with per-serving nutrition                    |
+| `delete_recipe`         | Delete a recipe                                                      |
+| `get_nutrition_summary` | Get nutrition totals and averages                                    |
+| `get_nutrition_alerts`  | Get deficiency and excess alerts                                     |
 
 ## Nutrition Tracking
 
@@ -275,8 +280,6 @@ Every meal is automatically tracked for:
 
 **Micronutrients:** B12, vitamin D, folate, iron, zinc, magnesium, calcium, potassium, omega-3, vitamin A, vitamin C
 
-The LLM estimates nutrition directly — no external API needed. Works great for any cuisine including Indian food.
-
 **Recipes:** Save recipes with ingredients and the system calculates per-serving nutrition. When you log a meal using a recipe, the stored nutrition is used directly for consistency.
 
 **Alerts:** When your 3-day average falls below 70% of recommended daily intake or exceeds safe upper limits, you'll see a warning.
@@ -284,14 +287,14 @@ The LLM estimates nutrition directly — no external API needed. Works great for
 ## Dynamic Context
 
 At session start, the LLM automatically sees:
-- Your full medication timeline
-- Latest lab results
-- Recent vitals (7 days)
 - Recent meals (3 days) with nutrition
 - Recent symptoms (7 days)
-- Recent sleep (7 days)
-- Recent exercise (7 days)
-- Recent journal entries (7 days)
+- Recent vitals (7 days)
+- Latest lab result per test type
+- Your current medication and recent changes
+- Recent sleep (3 days)
+- Recent exercise (3 days)
+- Recent journal entries (3 days)
 - Saved recipes with nutrition
 - Nutrition alerts
 
@@ -307,29 +310,32 @@ GUTAGENT_USERNAME=your_username
 GUTAGENT_PASSWORD=your_secure_password
 
 # LLM Provider (choose one)
-LLM_PROVIDER=gemini  # or claude, openai, groq, ollama
+LLM_PROVIDER=claude  # or gemini, openai, groq, ollama
 
 # API Keys (only need one, matching your provider)
-GOOGLE_API_KEY=your_gemini_key
-# ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_API_KEY=your_claude_key
+# GOOGLE_API_KEY=...
 # OPENAI_API_KEY=sk-...
 # GROQ_API_KEY=gsk_...
 ```
 
 ## Build Phases
 
-| Phase | Status | Description |
-|-------|--------|-------------|
-| Phase 0 | ✅ Done | Python fundamentals, environment setup |
-| Phase 1 | ✅ Done | Core agent loop, tool calling, CLI |
-| Phase 2 | ✅ Done | Meal/symptom/vitals/meds logging, corrections |
-| Phase 3 | ✅ Done | Sleep/exercise/journal, profile updates, pattern interpretation |
-| Phase 4 | ⏭️ Skipped | RAG knowledge base (deferred) |
-| Phase 5 | ✅ Done | Nutrition tracking with LLM estimates |
-| Phase 6 | ✅ Done | Web UI (FastAPI + React PWA) |
-| Phase 7 | 🔶 Partial | Auth ✅, Cloudflare tunnel ✅, permanent URL pending |
-| Phase 8 | 🔶 Partial | LLM abstraction (CLI ✅, web streaming hardcoded to Claude) |
-| Phase 9 | 🔲 Planned | Setup wizard for new users |
+| Phase    | Status        | Description                                                             |
+|----------|---------------|-------------------------------------------------------------------------|
+| Phase 0  | ✅ Done       | Python fundamentals, environment setup                                  |
+| Phase 1  | ✅ Done       | Core agent loop, tool calling, CLI                                      |
+| Phase 2  | ✅ Done       | Meal/symptom/vitals/meds logging, corrections, queries                  |
+| Phase 3  | ✅ Done       | Sleep/exercise/journal logging, profile updates, pattern interpretation |
+| Phase 4  | ⏭️ Skipped    | RAG knowledge base (deferred — LLM knowledge + web search sufficient)   |
+| Phase 5  | ✅ Done       | Nutrition tracking with LLM estimates                                   |
+| Phase 6  | ✅ Done       | Web UI (FastAPI + React PWA, streaming, mobile-first)                   |
+| Phase 7  | 🔶 Partial    | Auth ✅, Cloudflare tunnel ✅, permanent URL pending                    |
+| Phase 8  | 🔶 Partial    | LLM abstraction (CLI ✅, web streaming hardcoded to Claude)             |
+| Phase 9  | ✅ Done       | Lab result logging, recipes with per serving nutrition                  |
+| Phase 10 | 🔶 Partial    | API token optimization                                                  |
+| Phase 11 | 🔲 Planned    | Setup wizard for new users                                              |
+| Phase 12 | 🔲 Planned    | Profile restructure + insights storage                                  |
 
 ## Design Philosophy
 
@@ -344,7 +350,23 @@ GOOGLE_API_KEY=your_gemini_key
 
 ## Testing
 
-Run tests before committing changes to `models.py`, `registry.py`, or `profile.py`:
+Run tests before committing changes:
+
+**What's covered:**
+
+| File | Tested | Notes |
+|------|--------|-------|
+| `models.py` | ✅ | All database functions |
+| `registry.py` | ✅ | All handlers via `execute_tool()` |
+| `profile.py` | ✅ | load/save/update profile |
+| `config.py` | ❌ | Static tool definitions |
+| `system.py` | ❌ | Static prompt text |
+| `context.py` | ❌ | Builds API context |
+
+**When to run tests:**
+- After editing `models.py` — run all tests
+- After editing `registry.py` — run `TestRegistry` class
+- After editing `profile.py` — run `TestProfile` class
 
 ```bash
 # Run all tests

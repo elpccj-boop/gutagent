@@ -142,6 +142,7 @@ function QuickActions({ onAction, disabled }) {
         { emoji: '🍽️', label: 'Meal', prompt: 'I just had ' },
         { emoji: '🤒', label: 'Symptom', prompt: "I'm feeling " },
         { emoji: '❤️', label: 'Vitals', prompt: 'My BP is ' },
+        { emoji: '📊', label: 'Lab', prompt: 'My lab result: ' },
         { emoji: '😴', label: 'Sleep', prompt: 'I slept about ' },
         { emoji: '🏃', label: 'Exercise', prompt: 'I did ' },
         { emoji: '💊', label: 'Medication', prompt: 'I took ' },

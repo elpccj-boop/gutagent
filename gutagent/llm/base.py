@@ -10,6 +10,7 @@ class LLMResponse:
     """Standardized response from any LLM provider."""
     content: list  # List of content blocks (text or tool_use)
     stop_reason: str  # "end_turn", "tool_use", etc.
+    usage: dict = None  # Token usage info (optional)
     
     def get_text(self) -> str:
         """Extract text content from response."""

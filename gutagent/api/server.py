@@ -71,6 +71,7 @@ LOG_TOOLS = {
     "log_meal": "meals",
     "log_symptom": "symptoms",
     "log_vital": "vitals",
+    "log_lab": "labs",
     "log_medication_event": "medications",
     "log_sleep": "sleep",
     "log_exercise": "exercise",
@@ -106,6 +107,7 @@ def format_recent_logs(recent_logs: dict) -> str:
                 entry.get("vital_type") or
                 entry.get("type") or
                 entry.get("reading") or
+                entry.get("test_name") or
                 entry.get("medication") or
                 entry.get("event_type") or
                 str(entry)[:50]

@@ -86,15 +86,15 @@ class ClaudeProvider(BaseLLMProvider):
             messages=messages,
         )
         
-        # Log cache performance (useful for debugging/monitoring)
+        # Extract usage information
+        usage = None
         if hasattr(response, 'usage'):
-            usage = response.usage
-            cache_read = getattr(usage, 'cache_read_input_tokens', 0)
-            cache_create = getattr(usage, 'cache_creation_input_tokens', 0)
-            if cache_read or cache_create:
-                # Cache hit: cache_read > 0, Cache miss (first call): cache_create > 0
-                pass  # Uncomment below to debug:
-                print(f"  [Cache] read: {cache_read}, created: {cache_create}, input: {usage.input_tokens}, output: {usage.output_tokens}")
+            usage = {
+                "input_tokens": getattr(response.usage, 'input_tokens', 0),
+                "output_tokens": getattr(response.usage, 'output_tokens', 0),
+                "cache_creation_input_tokens": getattr(response.usage, 'cache_creation_input_tokens', 0),
+                "cache_read_input_tokens": getattr(response.usage, 'cache_read_input_tokens', 0),
+            }
 
         # Convert to standard format
         content = []
@@ -109,7 +109,7 @@ class ClaudeProvider(BaseLLMProvider):
                     "input": block.input,
                 })
         
-        return LLMResponse(content=content, stop_reason=response.stop_reason)
+        return LLMResponse(content=content, stop_reason=response.stop_reason, usage=usage)
     
     def chat_stream(
         self,
@@ -144,6 +144,16 @@ class ClaudeProvider(BaseLLMProvider):
             # Get final message
             final_message = stream.get_final_message()
             
+            # Extract usage information
+            usage = None
+            if hasattr(final_message, 'usage'):
+                usage = {
+                    "input_tokens": getattr(final_message.usage, 'input_tokens', 0),
+                    "output_tokens": getattr(final_message.usage, 'output_tokens', 0),
+                    "cache_creation_input_tokens": getattr(final_message.usage, 'cache_creation_input_tokens', 0),
+                    "cache_read_input_tokens": getattr(final_message.usage, 'cache_read_input_tokens', 0),
+                }
+
             # Convert to standard format
             content = []
             for block in final_message.content:
@@ -157,7 +167,7 @@ class ClaudeProvider(BaseLLMProvider):
                         "input": block.input,
                     })
             
-            return LLMResponse(content=content, stop_reason=final_message.stop_reason)
+            return LLMResponse(content=content, stop_reason=final_message.stop_reason, usage=usage)
     
     def get_model_name(self) -> str:
         return self.model

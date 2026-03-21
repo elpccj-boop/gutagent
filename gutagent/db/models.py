@@ -15,7 +15,7 @@ DB_PATH = os.getenv("GUTAGENT_DB_PATH", _default_db_path)
 RDA_TARGETS = {
     "fiber": {"target": 25, "unit": "g", "upper_limit": None},
     "vitamin_b12": {"target": 2.4, "unit": "μg", "upper_limit": None},
-    "vitamin_d": {"target": 15, "unit": "μg", "upper_limit": 100},
+    "vitamin_d": {"target": 15, "unit": "IU", "upper_limit": 100},
     "folate": {"target": 400, "unit": "μg", "upper_limit": 1000},
     "iron": {"target": 8, "unit": "mg", "upper_limit": 45},
     "zinc": {"target": 11, "unit": "mg", "upper_limit": 40},
@@ -23,7 +23,7 @@ RDA_TARGETS = {
     "calcium": {"target": 1000, "unit": "mg", "upper_limit": 2500},
     "potassium": {"target": 2600, "unit": "mg", "upper_limit": None},
     "omega_3": {"target": 1.6, "unit": "g", "upper_limit": None},
-    "vitamin_a": {"target": 900, "unit": "μg", "upper_limit": 3000},
+    "vitamin_a": {"target": 900, "unit": "IU", "upper_limit": 3000},
     "vitamin_c": {"target": 90, "unit": "mg", "upper_limit": None},
 }
 
@@ -35,6 +35,7 @@ def validate_timestamp(occurred_at: str | None) -> str:
     datetime.fromisoformat(occurred_at)
     return occurred_at
 
+# --- DB Setup ---
 
 def get_connection():
     """Get a database connection, creating the DB if needed."""
@@ -188,7 +189,7 @@ def init_db():
 
 def update_log(table: str, entry_id: int, updates: dict) -> dict:
     """Update fields on an existing log entry."""
-    allowed_tables = {"meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal"}
+    allowed_tables = {"meals", "symptoms", "vitals", "labs", "medications", "sleep", "exercise", "journal"}
     if table not in allowed_tables:
         return {"error": f"Cannot update table: {table}"}
 
@@ -211,7 +212,7 @@ def update_log(table: str, entry_id: int, updates: dict) -> dict:
 
 def delete_log(table: str, entry_id: int) -> dict:
     """Delete a log entry by id."""
-    allowed_tables = {"meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal"}
+    allowed_tables = {"meals", "symptoms", "vitals", "labs", "medications", "sleep", "exercise", "journal"}
     if table not in allowed_tables:
         return {"error": f"Cannot delete from table: {table}"}
 
@@ -309,18 +310,23 @@ def get_logs_by_date(table: str, date: str) -> list[dict]:
     Get all entries from a table for a specific date.
 
     Args:
-        table: One of meals, symptoms, vitals, medications, sleep, exercise, journal
+        table: One of meals, symptoms, vitals, labs, medications, sleep, exercise, journal
         date: Date string in YYYY-MM-DD format
 
     Returns:
         List of entries with all fields including id
     """
-    allowed_tables = {"meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal"}
+    allowed_tables = {"meals", "symptoms", "vitals", "labs", "medications", "sleep", "exercise", "journal"}
     if table not in allowed_tables:
         return []
 
-    # journal uses logged_at, others use occurred_at
-    date_column = "logged_at" if table == "journal" else "occurred_at"
+    # journal uses logged_at, labs uses test_date, others use occurred_at
+    if table == "journal":
+        date_column = "logged_at"
+    elif table == "labs":
+        date_column = "test_date"
+    else:
+        date_column = "occurred_at"
 
     conn = get_connection()
     rows = conn.execute(
@@ -575,6 +581,38 @@ def get_recent_vitals(days_back: int = 0, vital_type: str | None = None) -> str:
 
 
 # -- Labs Operations --
+
+def log_lab(test_name: str, test_date: str | None = None, value: float | None = None,
+            unit: str | None = None, reference_range: str | None = None,
+            status: str | None = None, notes: str | None = None) -> dict:
+    """Log a lab test result"""
+    validated_test_date = validate_timestamp(test_date)
+    # Extract just the date portion
+    test_date_str = validated_test_date.split()[0]
+    # logged_at is always current timestamp
+    logged_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection()
+    cursor = conn.execute(
+        """INSERT INTO labs (test_name, test_date, value, unit, reference_range, status, notes, logged_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (test_name, test_date_str, value, unit, reference_range, status, notes, logged_at)
+    )
+    conn.commit()
+    lab_id = cursor.lastrowid
+    conn.close()
+
+    # Build summary for response
+    summary_parts = [test_name]
+    if value is not None:
+        summary_parts.append(f"{value}")
+    if unit:
+        summary_parts.append(unit)
+    if status:
+        summary_parts.append(f"({status})")
+
+    return {"id": lab_id, "status": "logged", "test_name": test_name,
+            "test_date": test_date_str, "summary": " ".join(summary_parts)}
+
 
 def get_recent_labs(test_date: str | None = None) -> list:
     """Get labs from a specific date or most recent date."""

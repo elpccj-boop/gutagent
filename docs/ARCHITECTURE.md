@@ -7,10 +7,10 @@
 
 An AI agent that:
 1. **Knows your medical profile** — IBD, triggers, medications, labs, family history, preferences
-2. **Has tools** — meal logging, symptom tracking, vitals, sleep, exercise, medications, journal, profile updates, recipes, nutrition tracking
+2. **Has tools** — logs data (meals, symptoms, vitals, lab results, medications, sleep, exercise, journal, recipies), tracks nutrition, updates profile
 3. **Interprets your data** — LLM reviews your timeline to identify patterns and correlations
 4. **Pulls dynamic context** — system prompt combines static profile with recent data from all tables
-5. **Tracks nutrition** — LLM estimates calories, protein, and 11 micronutrients for every meal
+5. **Tracks nutrition** — LLM estimates macros and 11 micronutrients for every meal
 6. **Converses naturally** — "I had eggs and mutton for lunch" or "slept about 5 hours, pretty restless"
 7. **Available via CLI or Web** — Terminal interface for power users, mobile-friendly web UI for on-the-go
 8. **Multiple LLM providers** — Claude, Gemini, OpenAI, Groq, or local Ollama
@@ -72,6 +72,7 @@ An AI agent that:
      │  • log_meal with nutrition │
      │  • log_symptom             │
      │  • log_vital               │
+     │  • log_lab                 │
      │  • log_medication_event    │
      │  • log_sleep               │
      │  • log_exercise            │
@@ -138,13 +139,13 @@ An AI agent that:
 
 ### LLM Provider Comparison
 
-| Provider | Status | Cost | Notes |
-|----------|--------|------|-------|
-| Claude | ✅ Best | Paid | Best reasoning and tool calling |
-| Gemini | ✅ Recommended | Free tier | Good quality, generous free tier |
-| OpenAI | ✅ Works | Paid | Good quality |
-| Groq | ⚠️ Limited | Free tier | May hit token limits with full system prompt (~9600 tokens) |
-| Ollama | ⚠️ Unreliable | Free (local) | Small models (8B) struggle with complex tool calling |
+| Provider | Status | Cost      | Notes                                           |
+|----------|--------|-----------|-------------------------------------------------|
+| `claude` | ✅ Best | Paid (~$0.002-0.02/msg) | Best reasoning and tool calling                 |
+| `openai` | ✅ Works | Paid (~$0.002-0.02/msg) | Good quality                                    |
+| `gemini` | ⚠️ Limiting | Free tier | Good quality, free tier runs out fast           |
+| `groq` | ⚠️ Doesn't work | Free tier | Unable to handlle full system prompt            |
+| `ollama` | ⚠️ Unreliable | Free (local) | Small models struggle with complex tool calling |
 
 ### Current limitations
 
@@ -214,11 +215,11 @@ gutagent_project/
 
 ### Design decisions
 
-**Consolidated tool handlers** — All handlers in `registry.py`, all DB ops in `models.py`. Each handler is 5-10 lines. Split into separate files only when a module exceeds ~300 lines.
+**Consolidated tool handlers** — All handlers in `registry.py`. All DB ops in `models.py`. Each handler is 5-10 lines. Split into separate files only when a module exceeds ~300 lines.
 
 **Profile vs Database** — Static facts (conditions, family history, dietary rules) live in `profile.json`. Dynamic data (meals, symptoms, vitals, sleep, exercise, etc.) lives in the database. System prompt pulls from both sources every API call.
 
-**Dynamic context includes everything** — At session start, the LLM sees recent data from all tables (meals, symptoms, vitals, sleep, exercise, meds, labs, journal) plus nutrition alerts. This eliminates redundant queries. `query_logs` is for searching further back or filtering.
+**Dynamic context includes everything** — At session start, the LLM sees recent data from all tables (meals, symptoms, vitals, sleep, exercise, meds, labs, journal, recipes) plus nutrition alerts. This eliminates redundant queries. `query_logs` is for searching further back or filtering.
 
 **LLM interprets, code fetches** — No complex analysis code. Tools fetch data, the LLM interprets patterns. This works better than coded correlation engines.
 
@@ -341,13 +342,14 @@ class BaseLLMProvider(ABC):
 class LLMResponse:
     content: list[ContentBlock]  # Text or tool calls
     stop_reason: str             # "end_turn" or "tool_use"
+    usage: dict = None           # Token usage info (optional)
 ```
 
 ### Provider-Specific Notes
 
 **Claude** — Uses native Anthropic SDK. Best tool calling accuracy.
 
-**Gemini** — Uses `google-genai` SDK (not deprecated `google-generativeai`). Good free tier. Requires `Part.from_text(text=...)` with keyword argument.
+**Gemini** — Uses `google-genai` SDK (not deprecated `google-generativeai`). Limited free tier. Requires `Part.from_text(text=...)` with keyword argument.
 
 **OpenAI** — Uses OpenAI SDK. Compatible message format.
 
@@ -416,18 +418,18 @@ Browser                    Server                     Claude API
 
 The system prompt includes recent data from all tables, loaded at session start via `get_dynamic_context()`:
 
-| Data | Time Window | Notes |
-|------|-------------|-------|
-| Medication timeline | All history | Full timeline for context |
-| Latest labs | Most recent test date | Flagged abnormals |
-| Vitals | Last 7 days | BP, weight, etc. |
-| Meals | Last 3 days | With nutrition if available |
-| Symptoms | Last 7 days | With severity |
-| Sleep | Last 7 days | Hours and quality |
-| Exercise | Last 7 days | Activity and duration |
-| Journal | Last 7 days | Freeform notes |
-| Saved recipes | All | Recipe names listed |
-| Nutrition alerts | 3-day rolling | Deficiencies (<70% RDA) and excesses (above safe limits) |
+| Data             | Time Window               | Notes                                                    |
+|------------------|---------------------------|----------------------------------------------------------|
+| Meals            | Last 3 days               | With nutrition                                           |
+| Symptoms         | Last 7 days               | With severity                                            |
+| Vitals           | Last 7 days               | BP, weight, etc.                                         |
+| Lab results      | Most recent per test type | Flagged abnormals                                        |
+| Medication       | Current                   | With recent changes                                      |
+| Sleep            | Last 3 days               | Hours and quality                                        |
+| Exercise         | Last 3 days               | Activity and duration                                    |
+| Journal          | Last 3 days               | Freeform notes                                           |
+| Saved recipes    | All                       | Recipe names with per serving nutrition                  |
+| Nutrition alerts | 3-day rolling             | Deficiencies (<70% RDA) and excesses (above safe limits) |
 
 The LLM always has this context without needing to query. Tools are for deeper searches or longer time ranges.
 
@@ -478,8 +480,6 @@ All timestamps are **local time** (no UTC).
 | occurred_at | TIMESTAMP | When event happened |
 | dose | TEXT | Dose information |
 | notes | TEXT | Additional context |
-
-`snapshot` event type stores medication state at a point in time (e.g., doctor visits). The full medication timeline is dumped into the system prompt — the LLM interprets the history rather than code trying to parse it.
 
 ### labs
 | Column | Type | Notes |
@@ -622,66 +622,60 @@ Excess alerts are sorted first (more urgent), then deficiencies by percent.
 ### RDA Targets
 
 | Nutrient | Daily Target | Upper Limit | Unit |
-|----------|--------------|-------------|------|
-| Fiber | 25 | — | g |
-| Vitamin B12 | 2.4 | — | μg |
-| Vitamin D | 15 | 100 | μg |
-| Folate | 400 | 1000 | μg |
-| Iron | 8 | 45 | mg |
-| Zinc | 11 | 40 | mg |
-| Magnesium | 400 | — | mg |
-| Calcium | 1000 | 2500 | mg |
-| Potassium | 2600 | — | mg |
-| Omega-3 | 1.6 | — | g |
-| Vitamin A | 900 | 3000 | μg |
-| Vitamin C | 90 | — | mg |
-
-### Recipes
-
-Saved recipes enable consistent nutrition tracking for repeated dishes:
-- User describes ingredients and servings → LLM saves with `save_recipe`
-- System calculates and stores per-serving nutrition
-- When logging a meal, LLM checks for matching recipe and uses stored nutrition
+|----------|--------------|-------------|-----|
+| Fiber | 25 | — | g   |
+| Vitamin B12 | 2.4 | — | μg  |
+| Vitamin D | 15 | 100 | IU  |
+| Folate | 400 | 1000 | μg  |
+| Iron | 8 | 45 | mg  |
+| Zinc | 11 | 40 | mg  |
+| Magnesium | 400 | — | mg  |
+| Calcium | 1000 | 2500 | mg  |
+| Potassium | 2600 | — | mg  |
+| Omega-3 | 1.6 | — | g   |
+| Vitamin A | 900 | 3000 | IU  |
+| Vitamin C | 90 | — | mg  |
 
 ---
 
-## Tools (17 total)
+## Tools (18 total)
 
-| Tool | What it does |
-|------|--------------|
-| `log_meal` | Log food with itemized nutrition estimates |
-| `log_symptom` | Log physical/mental symptoms with severity |
-| `log_vital` | Log BP, weight, temperature, etc. |
-| `log_medication_event` | Track medication starts, stops, dose changes |
-| `log_sleep` | Log sleep hours and quality |
-| `log_exercise` | Log physical activity |
-| `log_journal` | Freeform notes and life events |
-| `query_logs` | Search across all tables — for deeper dives or longer time ranges |
-| `get_profile` | Retrieve full medical profile |
-| `correct_log` | Update or delete existing entries |
-| `update_profile` | Add/modify profile data (conditions, suggestions, etc.) |
-| `save_recipe` | Save a recipe with ingredients and per-serving nutrition |
-| `get_recipe` | Retrieve a saved recipe with nutrition |
-| `list_recipes` | List all saved recipes with per-serving nutrition |
-| `delete_recipe` | Delete a saved recipe |
-| `get_nutrition_summary` | Get nutrition totals and daily averages |
-| `get_nutrition_alerts` | Get deficiency and excess alerts |
+| Tool                    | What it does                                                      |
+|-------------------------|-------------------------------------------------------------------|
+| `log_meal`              | Log food with itemized nutrition estimates                        |
+| `log_symptom`           | Log physical/mental symptoms with severity                        |
+| `log_vital`             | Log BP, weight, temperature, etc.                                 |
+| `log_lab`               | Log ESR, Hemoblobin, TSH, CRP, etc.                               |
+| `log_medication_event`  | Track medication starts, stops, dose changes                      |
+| `log_sleep`             | Log sleep hours and quality                                       |
+| `log_exercise`          | Log physical activity                                             |
+| `log_journal`           | Freeform notes and life events                                    |
+| `query_logs`            | Search across all tables — for deeper dives or longer time ranges |
+| `get_profile`           | Retrieve full medical profile                                     |
+| `correct_log`           | Update or delete existing entries                                 |
+| `update_profile`        | Add/modify profile data (conditions, suggestions, etc.)           |
+| `save_recipe`           | Save a recipe with ingredients and per-serving nutrition          |
+| `get_recipe`            | Retrieve a saved recipe with nutrition                            |
+| `list_recipes`          | List all saved recipes with per-serving nutrition                 |
+| `delete_recipe`         | Delete a saved recipe                                             |
+| `get_nutrition_summary` | Get nutrition totals and daily averages                           |
+| `get_nutrition_alerts`  | Get deficiency and excess alerts                                  |
 
 ### query_logs types
 
-| Query Type | What it returns | Default days_back |
-|------------|-----------------|-------------------|
-| `recent_meals` | Meals with foods | 7 |
-| `recent_symptoms` | Symptoms with severity | 7 |
-| `food_search` | Meals containing specific food | all |
-| `symptom_search` | Specific symptom history | all |
-| `date_range` | Meals + symptoms together | 7 |
-| `recent_vitals` | Vitals (BP, weight, etc.) | 0 (all data) |
-| `recent_meds` | Medication events | 365 |
-| `recent_labs` | Lab results | latest test date |
-| `recent_sleep` | Sleep entries | 7 |
-| `recent_exercise` | Exercise entries | 7 |
-| `recent_journal` | Journal entries | 7 |
+| Query Type | What it returns | Default days_back    |
+|------------|-----------------|----------------------|
+| `recent_meals` | Meals with foods | 7                    |
+| `recent_symptoms` | Symptoms with severity | 7                    |
+| `food_search` | Meals containing specific food | all                  |
+| `symptom_search` | Specific symptom history | all                  |
+| `date_range` | Meals + symptoms together | 7                    |
+| `recent_vitals` | Vitals (BP, weight, etc.) | 0 (all data)         |
+| `recent_meds` | Medication events | 365                  |
+| `recent_labs` | Lab results | latest per test type |
+| `recent_sleep` | Sleep entries | 7                    |
+| `recent_exercise` | Exercise entries | 7                    |
+| `recent_journal` | Journal entries | 7                    |
 
 ### correct_log actions
 
@@ -690,7 +684,7 @@ Saved recipes enable consistent nutrition tracking for repeated dishes:
 | `update` | Change fields on an existing entry | table, entry_id, updates dict |
 | `delete` | Remove an entry | table, entry_id |
 
-Allowed tables: meals, symptoms, vitals, medications, sleep, exercise, journal.
+Allowed tables: meals, symptoms, vitals, labs, medications, sleep, exercise, journal.
 
 ### update_profile actions
 
@@ -850,6 +844,41 @@ Key points:
 3. System divides nutrition by 4, stores per-serving values
 4. Next time user logs "dal tadka", LLM uses `recipe_name` parameter
 
+### "My B12 came back at 450"
+1. User message → agent loop
+2. LLM calls `log_lab`:
+   ```json
+   {
+     "test_name": "B12",
+     "value": 450,
+     "unit": "pg/mL",
+     "status": "normal"
+   }
+   ```
+3. Registry logs to labs table with test_date defaulting to today
+4. Result returned to LLM → "Logged your B12 result: 450 pg/mL (normal)."
+
+### "Got my labs from March 10th - B12 was 450, Ferritin was 25 (low)"
+1. LLM recognizes multiple test results
+2. LLM calls `log_lab` twice with test_date="2026-03-10":
+   - First: B12, value=450, status="normal"
+   - Second: Ferritin, value=25, status="low"
+3. Both logged with same test_date
+4. Result: "Logged 2 lab results from March 10th: B12 450 pg/mL (normal), Ferritin 25 ng/mL (low)."
+
+### "Remove B12 from my upcoming tests list"
+1. User completed a test that was in profile.suggestions.tests_to_request
+2. LLM calls `update_profile`:
+   ```json
+   {
+     "section": "suggestions.tests_to_request",
+     "action": "remove",
+     "value": "B12 levels"
+   }
+   ```
+3. Entry removed from profile
+4. Now completed tests live in database, upcoming tests in profile
+```
 ---
 
 ## Utility Scripts (utils/)
@@ -866,19 +895,21 @@ python -m gutagent.utils.check_data vitals --days 7    # last 7 days
 
 ## Build Progress
 
-| Phase   | Status | Description |
-|---------|--------|-------------|
-| Phase 0 | ✅ Done | Python fundamentals, environment setup |
-| Phase 1 | ✅ Done | Core agent loop, tool calling, CLI |
-| Phase 2 | ✅ Done | Meal/symptom logging, vitals, medications, labs, corrections, unified queries |
-| Phase 3 | ✅ Done | Pattern interpretation, profile updates, sleep/exercise/journal tracking |
-| Phase 4 | ⏭️ Skipped | RAG knowledge base (deferred — LLM knowledge + web search sufficient) |
-| Phase 5 | ✅ Done | Nutrition tracking (LLM estimates, no external API) |
-| Phase 6 | ✅ Done | Web UI (FastAPI + React PWA, streaming, mobile-first) |
-| Phase 7 | 🔶 Partial | Auth (done), remote hosting (Cloudflare tunnel works, permanent URL pending) |
-| Phase 8 | 🔶 Partial | LLM abstraction (CLI supports all providers, web hardcoded to Claude) |
-| Phase 9 | 🔲 Planned | Setup wizard for new users |
-| Phase 10 | 🔲 Planned | Profile restructure + insights storage |
+| Phase    | Status        | Description                                                             |
+|----------|---------------|-------------------------------------------------------------------------|
+| Phase 0  | ✅ Done       | Python fundamentals, environment setup                                  |
+| Phase 1  | ✅ Done       | Core agent loop, tool calling, CLI                                      |
+| Phase 2  | ✅ Done       | Meal/symptom/vitals/meds logging, corrections, queries                  |
+| Phase 3  | ✅ Done       | Sleep/exercise/journal logging, profile updates, pattern interpretation |
+| Phase 4  | ⏭️ Skipped    | RAG knowledge base (deferred — LLM knowledge + web search sufficient)   |
+| Phase 5  | ✅ Done       | Nutrition tracking with LLM estimates                                   |
+| Phase 6  | ✅ Done       | Web UI (FastAPI + React PWA, streaming, mobile-first)                   |
+| Phase 7  | 🔶 Partial    | Auth ✅, Cloudflare tunnel ✅, permanent URL pending                    |
+| Phase 8  | 🔶 Partial    | LLM abstraction (CLI ✅, web streaming hardcoded to Claude)             |
+| Phase 9  | ✅ Done       | Lab result logging, recipes with per serving nutrition                  |
+| Phase 10 | 🔶 Partial    | API token optimization                                                  |
+| Phase 11 | 🔲 Planned    | Setup wizard for new users                                              |
+| Phase 12 | 🔲 Planned    | Profile restructure + insights storage                                  |
 
 ---
 
@@ -894,7 +925,7 @@ Rough estimates per message exchange:
 | Groq | Free | Free |
 | Ollama | Free (local) | Free (local) |
 
-Using Haiku for routine logging and Sonnet for analysis keeps costs low (~$1-2/month for typical use). Gemini is the recommended free alternative.
+Using Haiku for routine logging and Sonnet for analysis keeps costs low (~$1-2/month for typical use).
 
 ---
 

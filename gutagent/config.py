@@ -3,11 +3,9 @@
 import os
 
 # LLM Provider config
-# Options: "claude", "openai", "ollama"
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "claude")
 
 # Model config per provider
-# "default" = fast/cheap, "smart" = capable/expensive
 MODELS = {
     "claude": {
         "default": "claude-haiku-4-5-20251001",
@@ -32,23 +30,14 @@ MODELS = {
 }
 
 def get_model_for_tier(tier: str = "default", provider: str = None) -> str:
-    """
-    Get the model name for a given tier and provider.
-
-    Args:
-        tier: "default" (fast/cheap) or "smart" (capable/expensive)
-        provider: "claude", "openai", "ollama" (defaults to LLM_PROVIDER)
-
-    Returns:
-        Model name string
-    """
+    """Get model name for a given tier and provider."""
     provider = provider or LLM_PROVIDER
     return MODELS.get(provider, MODELS["claude"]).get(tier, MODELS[provider]["default"])
 
 
 MAX_TOKENS = 4096
 
-# API keys — set via environment variables
+# API keys
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -56,77 +45,58 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "gutagent.db")
 PROFILE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "profile.json")
 
-# Tool definitions for Claude function calling
+# Tool definitions
 TOOLS = [
     {
         "name": "log_meal",
-        "description": (
-            "Log a meal the user has eaten. Call this proactively whenever the user "
-            "mentions eating something, even casually. Parse the meal into individual "
-            "food items and estimate nutrition for each item including micronutrients."
-        ),
+        "description": "Log meal with itemized nutrition (macros + micros). Check saved recipes first, use recipe_name if match found.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "meal_type": {
-                    "type": "string",
-                    "enum": ["breakfast", "lunch", "dinner", "snack"],
-                    "description": "Type of meal. Infer from time of day or context if not stated."
+                    "type": "string", "enum": ["breakfast", "lunch", "dinner", "snack"],
+                    "description": "Infer from time/context if not stated."
                 },
                 "description": {
                     "type": "string",
-                    "description": "Just the food items eaten (e.g., 'Chicken curry with rice'). Do NOT include meal type or time — those go in meal_type and occurred_at."
+                    "description": "Food items only, e.g. 'Chicken curry with rice'."
                 },
                 "items": {
                     "type": "array",
-                    "description": "Individual food items with estimated nutrition. Parse the meal into components.",
+                    "description": "Food components with nutrition estimates.",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "Food name (e.g., 'roti', 'chicken curry', 'rice')"
-                            },
-                            "quantity": {
-                                "type": "number",
-                                "description": "Amount (e.g., 2 for '2 rotis', 150 for '150g chicken')"
-                            },
-                            "unit": {
-                                "type": "string",
-                                "description": "Unit of measure (piece, g, cup, tbsp, etc.). Default to 'piece' for countable items."
-                            },
-                            "calories": {"type": "number", "description": "Estimated calories"},
-                            "protein": {"type": "number", "description": "Protein in grams"},
-                            "carbs": {"type": "number", "description": "Carbohydrates in grams"},
-                            "fat": {"type": "number", "description": "Fat in grams"},
-                            "fiber": {"type": "number", "description": "Fiber in grams"},
-                            "vitamin_b12": {"type": "number", "description": "Vitamin B12 in μg"},
-                            "vitamin_d": {"type": "number", "description": "Vitamin D in μg"},
-                            "folate": {"type": "number", "description": "Folate in μg"},
-                            "iron": {"type": "number", "description": "Iron in mg"},
-                            "zinc": {"type": "number", "description": "Zinc in mg"},
-                            "magnesium": {"type": "number", "description": "Magnesium in mg"},
-                            "calcium": {"type": "number", "description": "Calcium in mg"},
-                            "potassium": {"type": "number", "description": "Potassium in mg"},
-                            "omega_3": {"type": "number", "description": "Omega-3 fatty acids in g"},
-                            "vitamin_a": {"type": "number", "description": "Vitamin A in μg"},
-                            "vitamin_c": {"type": "number", "description": "Vitamin C in mg"},
+                            "name": {"type": "string", "description": "Food name"},
+                            "quantity": {"type": "number", "description": "Amount"},
+                            "unit": {"type": "string", "description": "Unit (piece, g, cup, tbsp)"},
+                            "calories": {"type": "number"},
+                            "protein": {"type": "number", "description": "g"},
+                            "carbs": {"type": "number", "description": "g"},
+                            "fat": {"type": "number", "description": "g"},
+                            "fiber": {"type": "number", "description": "g"},
+                            "vitamin_b12": {"type": "number", "description": "μg"},
+                            "vitamin_d": {"type": "number", "description": "IU"},
+                            "folate": {"type": "number", "description": "μg"},
+                            "iron": {"type": "number", "description": "mg"},
+                            "zinc": {"type": "number", "description": "mg"},
+                            "magnesium": {"type": "number", "description": "mg"},
+                            "calcium": {"type": "number", "description": "mg"},
+                            "potassium": {"type": "number", "description": "mg"},
+                            "omega_3": {"type": "number", "description": "g"},
+                            "vitamin_a": {"type": "number", "description": "IU"},
+                            "vitamin_c": {"type": "number", "description": "mg"},
                         },
                         "required": ["name", "calories", "protein", "carbs", "fat"]
                     }
                 },
                 "recipe_name": {
                     "type": "string",
-                    "description": "If this matches a saved recipe, provide the recipe name to use its nutrition data."
+                    "description": "If matches saved recipe, use this to apply pre-calc nutrition."
                 },
                 "occurred_at": {
                     "type": "string",
-                    "description": (
-                        "When the meal actually happened, in YYYY-MM-DD HH:MM:SS format. "
-                        "ALWAYS provide this with meal-appropriate times: breakfast=08:00, lunch=12:30, dinner=19:30, snack=16:00. "
-                        "Examples: 'today's lunch' → today at 12:30, 'yesterday dinner' → yesterday at 19:30. "
-                        "Only omit if user says 'just now' or 'right now'."
-                    )
+                    "description": "YYYY-MM-DD HH:MM:SS. Set meal-appropriate times: breakfast=08:00, lunch=12:30, dinner=19:30, snack=16:00."
                 },
             },
             "required": ["description", "items"]
@@ -134,149 +104,70 @@ TOOLS = [
     },
     {
         "name": "log_symptom",
-        "description": (
-            "Log a symptom the user is experiencing. Call this proactively whenever "
-            "the user mentions ANY physical or mental symptom, even casually — "
-            "'I'm tired', 'stomach hurts', 'feeling bloated', 'brain fog', 'irritable'."
-        ),
+        "description": "Log symptom. Call proactively when user mentions any physical/mental symptom.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "symptom": {
                     "type": "string",
-                    "description": (
-                        "The symptom: bloating, fatigue, pain, brain_fog, nausea, "
-                        "diarrhea, constipation, mood_change, tingling, headache, "
-                        "lethargy, irritability, heartburn, etc."
-                    )
+                    "description": "bloating, fatigue, pain, brain_fog, nausea, diarrhea, etc."
                 },
-                "severity": {
-                    "type": "integer",
-                    "description": "Severity 1-10. Ask the user if unclear."
-                },
-                "timing": {
-                    "type": "string",
-                    "description": "When relative to last meal or time of day"
-                },
-                "notes": {
-                    "type": "string",
-                    "description": "Any additional context"
-                },
-                "occurred_at": {
-                    "type": "string",
-                    "description": (
-                        "When the symptom actually occurred, in YYYY-MM-DD HH:MM:SS format. "
-                        "Infer from context — 'last night' becomes yesterday's date at 21:00, "
-                        "'after lunch today' becomes today at 13:30, etc. "
-                        "Leave out if the symptom is happening right now."
-                    )
-                },
+                "severity": {"type": "integer", "description": "1-10. Ask if unclear."},
+                "timing": {"type": "string", "description": "When relative to meal/time"},
+                "notes": {"type": "string"},
+                "occurred_at": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
             },
             "required": ["symptom", "severity"]
         }
     },
     {
         "name": "log_medication_event",
-        "description": (
-            "Log a medication change — starting, stopping, or changing dose. "
-            "Call this whenever the user mentions any change in medication."
-        ),
+        "description": "Log medication change (start/stop/dose change).",
         "input_schema": {
             "type": "object",
             "properties": {
-                "medication": {
-                    "type": "string",
-                    "description": "Name of the medication"
-                },
-                "event_type": {
-                    "type": "string",
-                    "enum": ["started", "stopped", "dose_changed"],
-                    "description": "What happened with the medication"
-                },
-                "occurred_at": {
-                    "type": "string",
-                    "description": (
-                        "When this happened, in YYYY-MM-DD HH:MM:SS format. "
-                        "Infer from context. Leave out if happening right now."
-                    )
-                },
-                "dose": {
-                    "type": "string",
-                    "description": "Dose information if relevant"
-                },
-                "notes": {
-                    "type": "string",
-                    "description": "Additional context"
-                }
+                "medication": {"type": "string"},
+                "event_type": {"type": "string", "enum": ["started", "stopped", "dose_changed"]},
+                "occurred_at": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
+                "dose": {"type": "string"},
+                "notes": {"type": "string"}
             },
             "required": ["medication", "event_type"]
         }
     },
     {
         "name": "log_vital",
-        "description": (
-            "Log a vital sign reading — blood pressure, weight, temperature, etc. "
-            "Call this whenever the user mentions any measurement or reading."
-        ),
+        "description": "Log vital sign (BP, weight, temp, HR, etc).",
         "input_schema": {
             "type": "object",
             "properties": {
                 "vital_type": {
                     "type": "string",
-                    "enum": ["blood_pressure", "weight", "temperature", "blood_sugar", "oxygen_saturation"],
-                    "description": "Type of vital sign"
+                    "enum": ["blood_pressure", "weight", "temperature", "heart_rate", "oxygen_saturation", "blood_glucose"]
                 },
-                "systolic": {
-                    "type": "integer",
-                    "description": "Systolic blood pressure (top number). Only for blood_pressure."
-                },
-                "diastolic": {
-                    "type": "integer",
-                    "description": "Diastolic blood pressure (bottom number). Only for blood_pressure."
-                },
-                "heart_rate": {
-                    "type": "integer",
-                    "description": "Heart rate in bpm. Often measured with blood pressure."
-                },
-                "value": {
-                    "type": "number",
-                    "description": "Numeric value for non-BP vitals (weight in kg/lb, temp in F/C, etc.)"
-                },
-                "unit": {
-                    "type": "string",
-                    "description": "Unit of measurement — kg, lb, F, C, mg/dL, %, etc."
-                },
-                "occurred_at": {
-                    "type": "string",
-                    "description": (
-                        "When the reading was taken, in YYYY-MM-DD HH:MM:SS format. "
-                        "Infer from context. Leave out if taken right now."
-                    )
-                },
-                "notes": {
-                    "type": "string",
-                    "description": "Additional context — position, time of day, before/after medication, etc."
-                }
+                "value": {"type": "number", "description": "Value (omit for BP)"},
+                "unit": {"type": "string", "description": "kg, °F, bpm, %, mg/dL"},
+                "systolic": {"type": "integer", "description": "BP only"},
+                "diastolic": {"type": "integer", "description": "BP only"},
+                "heart_rate": {"type": "integer", "description": "BP optional"},
+                "occurred_at": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
+                "notes": {"type": "string"}
             },
             "required": ["vital_type"]
         }
     },
     {
         "name": "query_logs",
-        "description": (
-            "Search logged data — meals, symptoms, vitals, medications, labs. "
-            "Use to check history, find patterns, or look up specific entries by date."
-        ),
+        "description": "Query historical data. Use for pattern analysis, finding baselines, or locating specific entries.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "query_type": {
                     "type": "string",
                     "enum": [
-                        "recent_meals", "recent_symptoms", "food_search",
-                        "symptom_search", "date_range", "recent_vitals",
-                        "recent_meds", "recent_labs", "recent_sleep",
-                        "recent_exercise", "recent_journal", "date_search"
+                        "recent_meals", "recent_symptoms", "recent_vitals", "recent_labs",
+                        "recent_meds", "recent_sleep", "recent_exercise", "recent_journal",
+                        "food_search", "symptom_search", "date_search", "date_range",
                     ],
                     "description": "Type of query. Use date_search to find entries on a specific date."
                 },
@@ -294,7 +185,7 @@ TOOLS = [
                 },
                 "table": {
                     "type": "string",
-                    "enum": ["meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal"],
+                    "enum": ["meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal", "labs"],
                     "description": "Which table to search. Used with date_search. Default is meals."
                 }
             },
@@ -302,182 +193,100 @@ TOOLS = [
         }
     },
     {
-            "name": "correct_log",
-            "description": (
-                "Update or delete an existing log entry. Use when the user wants to fix "
-                "a value (like severity, timestamp, description) or remove a duplicate. "
-                "Never create a new entry when a correction is needed."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["update", "delete"],
-                        "description": "Whether to update fields or delete the entry"
-                    },
-                    "table": {
-                        "type": "string",
-                        "enum": ["meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal"],
-                        "description": "Which table the entry is in"
-                    },
-                    "entry_id": {
-                        "type": "integer",
-                        "description": "The id of the entry to correct"
-                    },
-                    "updates": {
-                        "type": "object",
-                        "description": "Fields to update with new values. Only for action=update. Use column names: severity, occurred_at, description, notes, symptom, meal_type, systolic, diastolic, heart_rate, medication, event_type, dose, etc."
-                    }
-                },
-                "required": ["action", "table", "entry_id"]
-            }
-        },
-    {
-        "name": "get_profile",
-        "description": "Retrieve the user's full medical profile.",
+        "name": "correct_log",
+        "description": "Update or delete existing entry. Use entry_id from recent data or query_logs.",
         "input_schema": {
             "type": "object",
-            "properties": {}
+            "properties": {
+                "table": {
+                    "type": "string",
+                    "enum": ["meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal", "labs"]
+                },
+                "entry_id": {"type": "integer", "description": "Entry ID"},
+                "action": {
+                    "type": "string", "enum": ["update", "delete"],
+                    "description": "update to modify, delete to remove"
+                },
+                "updates": {
+                    "type": "object",
+                    "description": "Fields to update (action=update only). E.g. {'severity': 6, 'notes': 'worse now'}"
+                }
+            },
+            "required": ["table", "entry_id", "action"]
         }
     },
     {
+        "name": "get_profile",
+        "description": "Get patient's full medical profile.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
         "name": "update_profile",
-        "description": (
-            "Add, update, or remove information in the user's medical profile. Use when "
-            "the user shares permanent facts about themselves — chronic conditions, baseline "
-            "traits, dietary preferences, family history, etc. This persists across sessions."
-        ),
+        "description": "Update profile section (conditions, triggers, medications, suggestions, preferences).",
         "input_schema": {
             "type": "object",
             "properties": {
                 "section": {
                     "type": "string",
-                    "description": (
-                        "Dot-notation path to the section to update. Examples: "
-                        "'conditions.chronic', 'conditions.other', 'dietary.triggers', "
-                        "'dietary.safe_foods', 'lifestyle.notes', 'family_history.notes', "
-                        "'personal.notes'"
-                    )
+                    "description": "Path: 'conditions.chronic', 'triggers.confirmed_foods', 'suggestions.tests_to_request', etc."
                 },
                 "action": {
-                    "type": "string",
-                    "enum": ["append", "set", "remove"],
-                    "description": (
-                        "append: add to a list. "
-                        "set: replace a value (string or list). "
-                        "remove: remove an item from a list (matches by substring)."
-                    )
+                    "type": "string", "enum": ["set", "append", "remove"],
+                    "description": "set=replace, append=add to list, remove=delete from list"
                 },
-                "value": {
-                    "type": "string",
-                    "description": "The value to add, set, or remove"
-                }
+                "value": {"description": "New value or item to add/remove"}
             },
             "required": ["section", "action", "value"]
         }
     },
     {
         "name": "log_sleep",
-        "description": (
-            "Log sleep information. Use when the user mentions how they slept — "
-            "hours, quality, or both."
-        ),
+        "description": "Log sleep hours and quality.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "hours": {
-                    "type": "number",
-                    "description": "Hours of sleep"
-                },
-                "quality": {
-                    "type": "string",
-                    "description": "Sleep quality — good, poor, interrupted, restless, deep, etc."
-                },
-                "occurred_at": {
-                    "type": "string",
-                    "description": (
-                        "The night of sleep, in YYYY-MM-DD HH:MM:SS format. "
-                        "Use the date the user went to bed. Leave out if last night."
-                    )
-                },
-                "notes": {
-                    "type": "string",
-                    "description": "Additional context — woke up multiple times, dreams, etc."
-                }
+                "hours": {"type": "number"},
+                "quality": {"type": "string", "description": "good, poor, interrupted, restless, deep"},
+                "occurred_at": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
+                "notes": {"type": "string"}
             }
         }
     },
     {
         "name": "log_exercise",
-        "description": (
-            "Log exercise or physical activity. Use when the user mentions "
-            "walking, hiking, gym, yoga, or any physical activity."
-        ),
+        "description": "Log physical activity.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "activity": {
-                    "type": "string",
-                    "description": "Type of activity — walk, hike, gym, yoga, run, swim, etc."
-                },
-                "duration_minutes": {
-                    "type": "integer",
-                    "description": "Duration in minutes"
-                },
-                "occurred_at": {
-                    "type": "string",
-                    "description": (
-                        "When the exercise happened, in YYYY-MM-DD HH:MM:SS format. "
-                        "Leave out if just now."
-                    )
-                },
-                "notes": {
-                    "type": "string",
-                    "description": "Additional context — intensity, location, how it felt"
-                }
+                "activity": {"type": "string", "description": "walk, hike, gym, yoga, run, swim"},
+                "duration_minutes": {"type": "integer"},
+                "occurred_at": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
+                "notes": {"type": "string"}
             },
             "required": ["activity"]
         }
     },
     {
         "name": "log_journal",
-        "description": (
-            "Log a freeform journal entry. Use when the user wants to note something "
-            "that isn't a meal, symptom, vital, medication, sleep, or exercise — "
-            "life events, context, thoughts, plans, or anything they want to record."
-        ),
+        "description": "Freeform journal entry for things that don't fit other categories.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "description": {
-                    "type": "string",
-                    "description": "What the user wants to record"
-                }
+                "description": {"type": "string"}
             },
             "required": ["description"]
         }
     },
     {
         "name": "save_recipe",
-        "description": (
-            "Save a recipe the user makes often. Provide total nutrition for all ingredients, "
-            "and specify how many servings it makes. Per-serving nutrition is calculated automatically."
-        ),
+        "description": "Save recipe with total nutrition & servings. Per-serving calc is automatic.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Name of the recipe (e.g., 'masala tea', 'chicken curry')"
-                },
-                "servings": {
-                    "type": "number",
-                    "description": "How many servings this recipe makes (e.g., 3 cups of tea, 4 portions of curry). Default 1."
-                },
+                "name": {"type": "string"},
+                "servings": {"type": "number", "description": "How many servings (default 1)"},
                 "ingredients": {
                     "type": "array",
-                    "description": "Ingredients used in the recipe with their nutrition (e.g., 1 cup milk = 150 cal, 8g protein).",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -504,24 +313,18 @@ TOOLS = [
                         "required": ["name", "calories", "protein", "carbs", "fat"]
                     }
                 },
-                "notes": {
-                    "type": "string",
-                    "description": "Any notes about the recipe"
-                }
+                "notes": {"type": "string"}
             },
             "required": ["name", "ingredients"]
         }
     },
     {
         "name": "get_recipe",
-        "description": "Get a saved recipe by name.",
+        "description": "Get saved recipe by name.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Name of the recipe to retrieve"
-                }
+                "name": {"type": "string"}
             },
             "required": ["name"]
         }
@@ -536,48 +339,50 @@ TOOLS = [
     },
     {
         "name": "delete_recipe",
-        "description": "Delete a saved recipe.",
+        "description": "Delete saved recipe.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Name of the recipe to delete"
-                }
+                "name": {"type": "string"}
             },
             "required": ["name"]
         }
     },
     {
         "name": "get_nutrition_summary",
-        "description": (
-            "Get nutrition totals and daily averages for a time period. "
-            "Use when the user asks about their nutrition, calorie intake, protein, etc."
-        ),
+        "description": "Get nutrition totals & daily averages for time period.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "days": {
-                    "type": "integer",
-                    "description": "Number of days to summarize. Default 3."
-                }
+                "days": {"type": "integer", "description": "Days to summarize (default 3)"}
             }
         }
     },
     {
         "name": "get_nutrition_alerts",
-        "description": (
-            "Check for nutrient deficiencies based on RDA targets. "
-            "Returns alerts for nutrients below 70% of daily target."
-        ),
+        "description": "Check nutrient deficiencies (<70% RDA).",
         "input_schema": {
             "type": "object",
             "properties": {
-                "days": {
-                    "type": "integer",
-                    "description": "Number of days to analyze. Default 3."
-                }
+                "days": {"type": "integer", "description": "Days to analyze (default 3)"}
             }
+        }
+    },
+    {
+        "name": "log_lab",
+        "description": "Log lab test results.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "test_name": {"type": "string", "description": "Test name (e.g., B12, Ferritin, CRP)"},
+                "test_date": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
+                "value": {"type": "number"},
+                "unit": {"type": "string", "description": "pg/mL, ng/mL, mg/dL, etc."},
+                "reference_range": {"type": "string", "description": "e.g., '200-900 pg/mL'"},
+                "status": {"type": "string", "enum": ["normal", "low", "high", "critical"]},
+                "notes": {"type": "string"}
+            },
+            "required": ["test_name"]
         }
     },
 ]

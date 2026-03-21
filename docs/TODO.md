@@ -5,33 +5,18 @@
 - [ ] Setup wizard for new users
 - [ ] Offline queue for web UI
 - [ ] Permanent URL (purchase domain for Cloudflare)
-- [ ] Reduce tool definitions size (13.5K chars, 17 tools)
-
-## Testing
-
-Run tests before committing changes:
-
-```bash
-pytest tests/test_gutagent.py -v
-```
-
-**What's covered:**
-
-| File | Tested | Notes |
-|------|--------|-------|
-| `models.py` | ✅ | All database functions |
-| `registry.py` | ✅ | All handlers via `execute_tool()` |
-| `profile.py` | ✅ | load/save/update profile |
-| `config.py` | ❌ | Static tool definitions |
-| `system.py` | ❌ | Static prompt text |
-| `context.py` | ❌ | Builds API context |
-
-**When to run tests:**
-- After editing `models.py` — run all tests
-- After editing `registry.py` — run `TestRegistry` class
-- After editing `profile.py` — run `TestProfile` class
+- [ ] Reduce token usage
+- [ ] Add recipies to recent logs so they can be corrected
+- [ ] Verify units of micros (Vitamin A and D)
+- [ ] Verify labs are logged without test date errors
+- [ ] Same symptom should not be logged repeatedly while chatting
+- [ ] Test profile updates: "Remember that I have hypohidrosis — I barely sweat"
+- [ ] Confirm query_log defaults for #days to go back
 
 ## Done
+- [x] Reduced static prompt to 6215 tokens
+- [x] Reduced dynamic tokens by replacing conv history with last exchange and recent logs 
+- [x] Added lab test logging and editing
 - [x] Recipe system with per-serving nutrition storage
 - [x] Backfill 43 meals with complete macro + micronutrient data
 - [x] Fix display rounding for small nutrient values (omega-3, B12, iron, zinc)
