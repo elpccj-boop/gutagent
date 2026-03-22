@@ -306,6 +306,17 @@ function App() {
                                 };
                                 return updated;
                             });
+                        } else if (data.type === 'usage') {
+                            // Handle token usage
+                            console.log('Token usage:', {
+                                input: data.input_tokens,
+                                output: data.output_tokens,
+                                cacheRead: data.cache_read_input_tokens,
+                                cacheCreate: data.cache_creation_input_tokens,
+                                total: data.input_tokens + data.output_tokens + data.cache_read_input_tokens + data.cache_creation_input_tokens
+                            });
+                            // Optionally store in state to display in UI
+                            // For now, just logging to console
                         } else if (data.type === 'error') {
                             throw new Error(data.message);
                         }

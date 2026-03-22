@@ -22,6 +22,11 @@ import os
 import json
 import tempfile
 
+
+# =============================================================================
+# SETUP
+# =============================================================================
+
 # Set up test database before importing models
 @pytest.fixture(autouse=True)
 def temp_db(monkeypatch):
@@ -37,6 +42,26 @@ def temp_db(monkeypatch):
     yield path
     
     os.unlink(path)
+
+@pytest.fixture(autouse=True)
+def temp_profile(monkeypatch, tmp_path):
+    """Use a temporary profile for each test."""
+    profile_path = tmp_path / "profile.json"
+
+    # Create minimal test profile
+    test_profile = {
+        "personal": {
+            "sex": "female",
+            "dob": "1971-03-20"
+        }
+    }
+
+    profile_path.write_text(json.dumps(test_profile, indent=2))
+
+    # Monkey-patch the PROFILE_PATH
+    monkeypatch.setattr("gutagent.profile.PROFILE_PATH", str(profile_path))
+
+    yield str(profile_path)
 
 
 # =============================================================================
@@ -212,6 +237,152 @@ class TestVitals:
         result = get_recent_vitals(days_back=1, vital_type="blood_pressure")
         # Returns a formatted string
         assert isinstance(result, (str, dict))
+
+
+# =============================================================================
+# LAB TESTS
+# =============================================================================
+
+class TestLabs:
+    """Tests for lab test logging and querying."""
+
+    def test_log_lab_minimal(self):
+        """Log lab with just test name."""
+        from gutagent.db.models import log_lab
+
+        result = log_lab(test_name="B12")
+
+        assert result["id"] > 0
+        assert result["status"] == "logged"
+        assert result["test_name"] == "B12"
+        assert "B12" in result["summary"]
+
+    def test_log_lab_complete(self):
+        """Log lab with all fields."""
+        from gutagent.db.models import log_lab
+
+        result = log_lab(
+            test_name="Ferritin",
+            test_date="2026-03-10 09:00:00",
+            value=25,
+            unit="ng/mL",
+            reference_range="30-400 ng/mL",
+            status="low",
+            notes="Retest in 3 months"
+        )
+
+        assert result["id"] > 0
+        assert result["status"] == "logged"
+        assert result["test_name"] == "Ferritin"
+        assert result["test_date"] == "2026-03-10"
+        assert "Ferritin" in result["summary"]
+        assert "25" in result["summary"]
+        assert "low" in result["summary"]
+
+    def test_log_lab_infers_date(self):
+        """Log lab defaults to today if no date provided."""
+        from gutagent.db.models import log_lab
+        from datetime import datetime
+
+        result = log_lab(test_name="CRP", value=0.5, unit="mg/L")
+
+        # Should default to today's date
+        today = datetime.now().strftime("%Y-%m-%d")
+        assert result["test_date"] == today
+
+    def test_get_recent_labs(self):
+        """Get recent lab results."""
+        from gutagent.db.models import log_lab, get_recent_labs
+
+        log_lab(test_name="B12", value=450, unit="pg/mL")
+        log_lab(test_name="Ferritin", value=25, unit="ng/mL")
+
+        labs = get_recent_labs()
+
+        assert len(labs) == 2
+        assert any(lab["test_name"] == "B12" for lab in labs)
+        assert any(lab["test_name"] == "Ferritin" for lab in labs)
+
+    def test_get_recent_labs_by_test_name(self):
+        """Get labs filtered by test name."""
+        from gutagent.db.models import log_lab, get_recent_labs
+
+        log_lab(test_name="B12", value=450, unit="pg/mL", test_date="2026-03-01")
+        log_lab(test_name="B12", value=460, unit="pg/mL", test_date="2026-03-10")
+        log_lab(test_name="Ferritin", value=25, unit="ng/mL")
+
+        b12_labs = get_recent_labs(test_date="B12")  # Note: current implementation uses test_date param
+
+        # Should return B12 results (implementation dependent)
+        assert len(b12_labs) >= 0
+
+    def test_get_latest_labs_per_test(self):
+        """Get latest result for each test type."""
+        from gutagent.db.models import log_lab, get_latest_labs_per_test
+
+        # Log multiple results for same test
+        log_lab(test_name="B12", value=450, unit="pg/mL", test_date="2026-03-01")
+        log_lab(test_name="B12", value=460, unit="pg/mL", test_date="2026-03-10")
+        log_lab(test_name="Ferritin", value=25, unit="ng/mL", test_date="2026-03-05")
+
+        latest = get_latest_labs_per_test()
+
+        # Should have one entry per test type
+        test_names = [lab["test_name"] for lab in latest]
+        assert "B12" in test_names
+        assert "Ferritin" in test_names
+
+        # Should have latest B12 value
+        b12_entry = next(lab for lab in latest if lab["test_name"] == "B12")
+        assert b12_entry["value"] == 460
+
+    def test_get_logs_by_date_labs(self):
+        """Get labs by specific date."""
+        from gutagent.db.models import log_lab, get_logs_by_date
+
+        log_lab(test_name="B12", value=450, test_date="2026-03-10 09:00:00")
+        log_lab(test_name="Ferritin", value=25, test_date="2026-03-10 10:00:00")
+        log_lab(test_name="CRP", value=0.5, test_date="2026-03-11")
+
+        labs_march_10 = get_logs_by_date("labs", "2026-03-10")
+
+        assert len(labs_march_10) == 2
+        assert all(lab["test_date"] == "2026-03-10" for lab in labs_march_10)
+
+    def test_update_lab(self):
+        """Update lab entry."""
+        from gutagent.db.models import log_lab, update_log
+
+        result = log_lab(test_name="B12", value=450, unit="pg/mL")
+        lab_id = result["id"]
+
+        # Update value
+        update_log("labs", lab_id, {"value": 460})
+
+        # Verify update
+        from gutagent.db.models import get_connection
+        conn = get_connection()
+        updated = dict(conn.execute("SELECT * FROM labs WHERE id = ?", (lab_id,)).fetchone())
+        conn.close()
+
+        assert updated["value"] == 460
+
+    def test_delete_lab(self):
+        """Delete lab entry."""
+        from gutagent.db.models import log_lab, delete_log
+
+        result = log_lab(test_name="B12", value=450)
+        lab_id = result["id"]
+
+        delete_log("labs", lab_id)
+
+        # Verify deletion
+        from gutagent.db.models import get_connection
+        conn = get_connection()
+        deleted = conn.execute("SELECT * FROM labs WHERE id = ?", (lab_id,)).fetchone()
+        conn.close()
+
+        assert deleted is None
 
 
 # =============================================================================
@@ -486,151 +657,32 @@ class TestNutrition:
         # Should have some alerts
         assert len(result) > 0
 
+    def test_nutrition_rounding(self):
+        """Test that nutrition values are rounded appropriately."""
+        from gutagent.db.models import _round_nutrition
 
-# =============================================================================
-# LAB TESTS
-# =============================================================================
+        nutrition = {
+            'vitamin_b12': 2.789,
+            'iron': 5.134,
+            'zinc': 8.999,
+            'omega_3': 1.234,
+            'calcium': 289.67,
+            'vitamin_a': 1668.33,
+            'protein': 45.7,
+        }
 
-class TestLabs:
-    """Tests for lab test logging and querying."""
+        rounded = _round_nutrition(nutrition)
 
-    def test_log_lab_minimal(self):
-        """Log lab with just test name."""
-        from gutagent.db.models import log_lab
+        # 1 decimal place
+        assert rounded['vitamin_b12'] == 2.8
+        assert rounded['iron'] == 5.1
+        assert rounded['zinc'] == 9.0
+        assert rounded['omega_3'] == 1.2
 
-        result = log_lab(test_name="B12")
-
-        assert result["id"] > 0
-        assert result["status"] == "logged"
-        assert result["test_name"] == "B12"
-        assert "B12" in result["summary"]
-
-    def test_log_lab_complete(self):
-        """Log lab with all fields."""
-        from gutagent.db.models import log_lab
-
-        result = log_lab(
-            test_name="Ferritin",
-            test_date="2026-03-10 09:00:00",
-            value=25,
-            unit="ng/mL",
-            reference_range="30-400 ng/mL",
-            status="low",
-            notes="Retest in 3 months"
-        )
-
-        assert result["id"] > 0
-        assert result["status"] == "logged"
-        assert result["test_name"] == "Ferritin"
-        assert result["test_date"] == "2026-03-10"
-        assert "Ferritin" in result["summary"]
-        assert "25" in result["summary"]
-        assert "low" in result["summary"]
-
-    def test_log_lab_infers_date(self):
-        """Log lab defaults to today if no date provided."""
-        from gutagent.db.models import log_lab
-        from datetime import datetime
-
-        result = log_lab(test_name="CRP", value=0.5, unit="mg/L")
-
-        # Should default to today's date
-        today = datetime.now().strftime("%Y-%m-%d")
-        assert result["test_date"] == today
-
-    def test_get_recent_labs(self):
-        """Get recent lab results."""
-        from gutagent.db.models import log_lab, get_recent_labs
-
-        log_lab(test_name="B12", value=450, unit="pg/mL")
-        log_lab(test_name="Ferritin", value=25, unit="ng/mL")
-
-        labs = get_recent_labs()
-
-        assert len(labs) == 2
-        assert any(lab["test_name"] == "B12" for lab in labs)
-        assert any(lab["test_name"] == "Ferritin" for lab in labs)
-
-    def test_get_recent_labs_by_test_name(self):
-        """Get labs filtered by test name."""
-        from gutagent.db.models import log_lab, get_recent_labs
-
-        log_lab(test_name="B12", value=450, unit="pg/mL", test_date="2026-03-01")
-        log_lab(test_name="B12", value=460, unit="pg/mL", test_date="2026-03-10")
-        log_lab(test_name="Ferritin", value=25, unit="ng/mL")
-
-        b12_labs = get_recent_labs(test_date="B12")  # Note: current implementation uses test_date param
-
-        # Should return B12 results (implementation dependent)
-        assert len(b12_labs) >= 0
-
-    def test_get_latest_labs_per_test(self):
-        """Get latest result for each test type."""
-        from gutagent.db.models import log_lab, get_latest_labs_per_test
-
-        # Log multiple results for same test
-        log_lab(test_name="B12", value=450, unit="pg/mL", test_date="2026-03-01")
-        log_lab(test_name="B12", value=460, unit="pg/mL", test_date="2026-03-10")
-        log_lab(test_name="Ferritin", value=25, unit="ng/mL", test_date="2026-03-05")
-
-        latest = get_latest_labs_per_test()
-
-        # Should have one entry per test type
-        test_names = [lab["test_name"] for lab in latest]
-        assert "B12" in test_names
-        assert "Ferritin" in test_names
-
-        # Should have latest B12 value
-        b12_entry = next(lab for lab in latest if lab["test_name"] == "B12")
-        assert b12_entry["value"] == 460
-
-    def test_get_logs_by_date_labs(self):
-        """Get labs by specific date."""
-        from gutagent.db.models import log_lab, get_logs_by_date
-
-        log_lab(test_name="B12", value=450, test_date="2026-03-10 09:00:00")
-        log_lab(test_name="Ferritin", value=25, test_date="2026-03-10 10:00:00")
-        log_lab(test_name="CRP", value=0.5, test_date="2026-03-11")
-
-        labs_march_10 = get_logs_by_date("labs", "2026-03-10")
-
-        assert len(labs_march_10) == 2
-        assert all(lab["test_date"] == "2026-03-10" for lab in labs_march_10)
-
-    def test_update_lab(self):
-        """Update lab entry."""
-        from gutagent.db.models import log_lab, update_log
-
-        result = log_lab(test_name="B12", value=450, unit="pg/mL")
-        lab_id = result["id"]
-
-        # Update value
-        update_log("labs", lab_id, {"value": 460})
-
-        # Verify update
-        from gutagent.db.models import get_connection
-        conn = get_connection()
-        updated = dict(conn.execute("SELECT * FROM labs WHERE id = ?", (lab_id,)).fetchone())
-        conn.close()
-
-        assert updated["value"] == 460
-
-    def test_delete_lab(self):
-        """Delete lab entry."""
-        from gutagent.db.models import log_lab, delete_log
-
-        result = log_lab(test_name="B12", value=450)
-        lab_id = result["id"]
-
-        delete_log("labs", lab_id)
-
-        # Verify deletion
-        from gutagent.db.models import get_connection
-        conn = get_connection()
-        deleted = conn.execute("SELECT * FROM labs WHERE id = ?", (lab_id,)).fetchone()
-        conn.close()
-
-        assert deleted is None
+        # Integers
+        assert rounded['calcium'] == 290
+        assert rounded['vitamin_a'] == 1668
+        assert rounded['protein'] == 46
 
 
 # =============================================================================
@@ -1104,23 +1156,16 @@ class TestEdgeCases:
 class TestProfile:
     """Tests for profile management."""
 
-    @pytest.fixture(autouse=True)
-    def temp_profile(self, monkeypatch):
-        """Use a temporary profile for each test."""
-        fd, path = tempfile.mkstemp(suffix=".json")
-        os.close(fd)
-        os.unlink(path)  # Remove so load_profile sees "not found"
-
-        monkeypatch.setattr("gutagent.profile.PROFILE_PATH", path)
-
-        yield path
-
-        if os.path.exists(path):
-            os.unlink(path)
-
-    def test_load_profile_not_found(self):
+    def test_load_profile_not_found(self, monkeypatch):
         """Load profile when file doesn't exist."""
         from gutagent.profile import load_profile
+
+        # Point to a non-existent path
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        os.unlink(path)  # Remove it so it doesn't exist
+
+        monkeypatch.setattr("gutagent.profile.PROFILE_PATH", path)
 
         result = load_profile()
         assert "error" in result
@@ -1229,6 +1274,126 @@ class TestProfile:
         loaded = load_profile()
         assert loaded["level1"]["level2"]["level3"] == "new"
 
+    def test_update_profile_delete(self):
+        """Test deleting a dictionary key from profile."""
+        from gutagent.profile import update_profile, save_profile, load_profile
+
+        # Create profile with upcoming appointments
+        profile = {
+            "upcoming_appointments": {
+                "elf_test": "March 2026",
+                "gastro": "April 2026"
+            }
+        }
+        save_profile(profile)
+
+        # Delete elf_test
+        result = update_profile(
+            section="upcoming_appointments.elf_test",
+            action="delete",
+            value=""
+        )
+
+        assert result['status'] == 'deleted'
+
+        # Verify it's gone
+        updated = load_profile()
+        assert 'elf_test' not in updated['upcoming_appointments']
+        assert 'gastro' in updated['upcoming_appointments']
+
+# =============================================================================
+# RDA TESTS
+# =============================================================================
+
+class TestRDA:
+    """Tests for RDA"""
+
+    def test_rda_calculation_female_55(self):
+        """Test RDA targets for 55-year-old female."""
+        from gutagent.db.models import calculate_rda_targets
+
+        targets = calculate_rda_targets('female', 55)
+
+        # Postmenopausal female targets
+        assert targets['iron']['target'] == 8  # Postmenopausal (not 18)
+        assert targets['calcium']['target'] == 1200  # Age 51+
+        assert targets['fiber']['target'] == 21  # Female 51+
+        assert targets['vitamin_a']['target'] == 2333  # Female
+        assert targets['vitamin_a']['unit'] == 'IU'  # Correct unit
+        assert targets['vitamin_c']['target'] == 75  # Female
+
+    def test_rda_calculation_male_30(self):
+        """Test RDA targets for 30-year-old male."""
+        from gutagent.db.models import calculate_rda_targets
+
+        targets = calculate_rda_targets('male', 30)
+
+        assert targets['iron']['target'] == 8
+        assert targets['calcium']['target'] == 1000  # Under 71
+        assert targets['fiber']['target'] == 38  # Male under 51
+        assert targets['vitamin_a']['target'] == 3000  # Male (IU)
+        assert targets['vitamin_c']['target'] == 90  # Male
+
+    def test_calculate_age_from_dob(self):
+        """Test age calculation from date of birth."""
+        from gutagent.db.models import calculate_age_from_dob
+        from datetime import datetime
+
+        today = datetime.now()
+
+        # Someone born exactly 55 years ago today
+        dob_55_years = today.replace(year=today.year - 55).strftime("%Y-%m-%d")
+        assert calculate_age_from_dob(dob_55_years) == 55
+
+        # Someone born 30 years ago today
+        dob_30_years = today.replace(year=today.year - 30).strftime("%Y-%m-%d")
+        assert calculate_age_from_dob(dob_30_years) == 30
+
+        # Invalid formats
+        assert calculate_age_from_dob("YYYY-MM-DD") is None
+        assert calculate_age_from_dob("") is None
+        assert calculate_age_from_dob(None) is None
+
+    def test_init_models_with_profile(self):
+        """Test that init_models sets RDA_TARGETS from profile."""
+        from gutagent.db.models import set_rda_targets, RDA_TARGETS
+
+        profile = {
+            "personal": {
+                "sex": "female",
+                "dob": "1971-03-20"
+            }
+        }
+
+        set_rda_targets(profile)
+
+        # Should have female, age 55 targets
+        assert RDA_TARGETS['calcium']['target'] == 1200
+        assert RDA_TARGETS['iron']['target'] == 8
+
+    def test_save_profile_refreshes_rda(self):
+        """Test that saving profile refreshes RDA targets."""
+        from gutagent.profile import save_profile
+        from gutagent.db.models import RDA_TARGETS
+
+        # Save a profile with female, age 55
+        profile = {
+            "personal": {
+                "sex": "female",
+                "dob": "1971-03-20"
+            }
+        }
+
+        save_profile(profile)
+
+        # Check RDA targets were updated
+        assert RDA_TARGETS['calcium']['target'] == 1200  # Female 51+
+        assert RDA_TARGETS['iron']['target'] == 8  # Postmenopausal
+
+
+# =============================================================================
+# Main
+# =============================================================================
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

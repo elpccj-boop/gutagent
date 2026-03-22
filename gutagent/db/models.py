@@ -9,33 +9,93 @@ from datetime import datetime, timedelta
 _default_db_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "gutagent.db")
 DB_PATH = os.getenv("GUTAGENT_DB_PATH", _default_db_path)
 
-# RDA values for nutrition alerts
-# target = daily recommended intake
-# upper_limit = safe upper limit (None if no concern)
-RDA_TARGETS = {
-    "fiber": {"target": 25, "unit": "g", "upper_limit": None},
-    "vitamin_b12": {"target": 2.4, "unit": "μg", "upper_limit": None},
-    "vitamin_d": {"target": 15, "unit": "IU", "upper_limit": 100},
-    "folate": {"target": 400, "unit": "μg", "upper_limit": 1000},
-    "iron": {"target": 8, "unit": "mg", "upper_limit": 45},
-    "zinc": {"target": 11, "unit": "mg", "upper_limit": 40},
-    "magnesium": {"target": 400, "unit": "mg", "upper_limit": None},
-    "calcium": {"target": 1000, "unit": "mg", "upper_limit": 2500},
-    "potassium": {"target": 2600, "unit": "mg", "upper_limit": None},
-    "omega_3": {"target": 1.6, "unit": "g", "upper_limit": None},
-    "vitamin_a": {"target": 900, "unit": "IU", "upper_limit": 3000},
-    "vitamin_c": {"target": 90, "unit": "mg", "upper_limit": None},
-}
+
+# --- Setup RDA_TARGETS ---
+
+# Global RDA targets - set by init_models()
+RDA_TARGETS = {}
 
 
-def validate_timestamp(occurred_at: str | None) -> str:
-    """Validate and return a timestamp string. Raises ValueError for invalid dates."""
-    if occurred_at is None:
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    datetime.fromisoformat(occurred_at)
-    return occurred_at
+def set_rda_targets(profile: dict):
+    """Set RDA targets based on profile."""
+    gender = 'male'
+    age = 30
 
-# --- DB Setup ---
+    if profile:
+        personal = profile.get("personal", {})
+        sex = personal.get("sex", "").lower()
+        dob_age = calculate_age_from_dob(personal.get("dob", ""))
+
+        if sex in ['f', 'female', 'woman']:
+            gender = 'female'
+        if dob_age:
+            age = dob_age
+
+    new_targets = calculate_rda_targets(gender, age)
+    RDA_TARGETS.clear()
+    RDA_TARGETS.update(new_targets)
+
+
+def calculate_age_from_dob(dob_string: str) -> int | None:
+    """Calculate age from DOB string (YYYY-MM-DD format)."""
+    if not dob_string or dob_string == "YYYY-MM-DD":
+        return None
+    try:
+        dob = datetime.strptime(dob_string, "%Y-%m-%d")
+        today = datetime.now()
+        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        return age
+    except (ValueError, AttributeError):
+        return None
+
+
+def calculate_rda_targets(gender: str, age: int) -> dict:
+    """Calculate RDA targets based on gender and age.
+    target = daily recommended intake
+    upper_limit = safe upper limit (None if no concern)
+    Base targets structure with defaults for male 19-50"""
+    targets = {
+        "fiber": {"target": 38, "unit": "g", "upper_limit": None},
+        "vitamin_b12": {"target": 2.4, "unit": "μg", "upper_limit": None},
+        "vitamin_d": {"target": 600, "unit": "IU", "upper_limit": 4000},
+        "folate": {"target": 400, "unit": "μg", "upper_limit": 1000},
+        "iron": {"target": 8, "unit": "mg", "upper_limit": 45},
+        "zinc": {"target": 11, "unit": "mg", "upper_limit": 40},
+        "magnesium": {"target": 420, "unit": "mg", "upper_limit": None},
+        "calcium": {"target": 1000, "unit": "mg", "upper_limit": 2500},
+        "potassium": {"target": 3400, "unit": "mg", "upper_limit": None},
+        "omega_3": {"target": 1.6, "unit": "g", "upper_limit": None},
+        "vitamin_a": {"target": 3000, "unit": "IU", "upper_limit": 10000},
+        "vitamin_c": {"target": 90, "unit": "mg", "upper_limit": 2000},
+    }
+
+    if gender == "female":
+        targets["fiber"]["target"] = 25 if age < 51 else 21
+        targets["iron"]["target"] = 18 if age < 51 else 8
+        targets["zinc"]["target"] = 8
+        targets["magnesium"]["target"] = 310 if age < 31 else 320
+        targets["calcium"]["target"] = 1200 if age >= 51 else 1000
+        targets["potassium"]["target"] = 2600
+        targets["omega_3"]["target"] = 1.1
+        targets["vitamin_a"]["target"] = 2333  # 700 μg RAE
+        targets["vitamin_c"]["target"] = 75
+    else:  # male
+        targets["fiber"]["target"] = 38 if age < 51 else 30
+        targets["magnesium"]["target"] = 400 if age < 31 else 420
+        targets["calcium"]["target"] = 1200 if age >= 71 else 1000
+
+    # Age-specific overrides (both genders)
+    if age >= 51:
+        targets["calcium"]["upper_limit"] = 2000  # Decreases at 51+
+
+    if age >= 71:
+        targets["vitamin_d"]["target"] = 800
+        targets["calcium"]["target"] = 1200
+
+    return targets
+
+
+# --- Setup DB ---
 
 def get_connection():
     """Get a database connection, creating the DB if needed."""
@@ -185,6 +245,14 @@ def init_db():
     conn.close()
 
 
+def validate_timestamp(occurred_at: str | None) -> str:
+    """Validate and return a timestamp string. Raises ValueError for invalid dates."""
+    if occurred_at is None:
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    datetime.fromisoformat(occurred_at)
+    return occurred_at
+
+
 # --- Edit Log Operations ---
 
 def update_log(table: str, entry_id: int, updates: dict) -> dict:
@@ -225,6 +293,23 @@ def delete_log(table: str, entry_id: int) -> dict:
 
 # --- Meal Operations ---
 
+def _round_nutrition(nutrition: dict) -> dict:
+    """Round nutrition values appropriately based on typical precision."""
+    rounded = {}
+
+    # 1 decimal place: B12, iron, zinc, omega-3
+    one_decimal = {'vitamin_b12', 'iron', 'zinc', 'omega_3'}
+
+    for nutrient, value in nutrition.items():
+        if nutrient in one_decimal:
+            rounded[nutrient] = round(value, 1)
+        else:
+            # Integer: everything else
+            rounded[nutrient] = round(value)
+
+    return rounded
+
+
 def log_meal_with_nutrition(meal_type: str | None, description: str, items: list[dict],
                             nutrition: dict, occurred_at: str | None = None) -> dict:
     """Log a meal with itemized foods and calculated nutrition."""
@@ -245,6 +330,9 @@ def log_meal_with_nutrition(meal_type: str | None, description: str, items: list
                VALUES (?, ?, ?, ?)""",
             (meal_id, item.get("food_name"), item.get("quantity"), item.get("unit"))
         )
+
+    # Round nutrition values before storing
+    nutrition = _round_nutrition(nutrition)
 
     # Insert nutrition totals
     conn.execute(
@@ -270,12 +358,27 @@ def log_meal_with_nutrition(meal_type: str | None, description: str, items: list
     # Compact return - just essential info
     cal = int(nutrition.get("calories", 0))
     pro = int(nutrition.get("protein", 0))
+    fat = int(nutrition.get("fat", 0))
+    carb = int(nutrition.get("carbs", 0))
+    fiber = int(nutrition.get("fiber", 0))
+    vitamin_a = int(nutrition.get("vitamin_a", 0))
+    vitamin_b12 = int(nutrition.get("vitamin_b12", 0))
+    vitamin_c = int(nutrition.get("vitamin_c", 0))
+    vitamin_d = int(nutrition.get("vitamin_d", 0))
+    folate = int(nutrition.get("folate", 0))
+    iron = int(nutrition.get("iron", 0))
+    calcium = int(nutrition.get("calcium", 0))
+    magnesium = int(nutrition.get("magnesium", 0))
+    potassium = int(nutrition.get("potassium", 0))
+    zinc = int(nutrition.get("zinc", 0))
+    omega_3 = int(nutrition.get("omega_3", 0))
+
     return {
         "id": meal_id,
         "status": "logged",
         "meal_type": meal_type,
         "when": timestamp,
-        "summary": f"{description} — {cal} cal, {pro}g protein"
+        "summary": f"{description} — {cal} cal, {carb}g carb, {fiber}g fiber, {pro}g p, {fat}g f"
     }
 
 
@@ -766,6 +869,9 @@ def save_recipe(name: str, ingredients: list[dict], notes: str | None = None,
     # Divide by servings to get per-serving nutrition
     per_serving = {k: v / servings for k, v in nutrition.items()}
 
+    # Round per-serving values before storing
+    per_serving = _round_nutrition(per_serving)
+
     # Check if recipe exists (case-insensitive)
     existing = conn.execute(
         "SELECT id FROM recipes WHERE name = ? COLLATE NOCASE", (name,)
@@ -816,8 +922,11 @@ def save_recipe(name: str, ingredients: list[dict], notes: str | None = None,
 
     return {
         "id": recipe_id, "status": action, "name": name, "servings": servings,
-        "per_serving": {"calories": round(per_serving.get("calories", 0)),
-                        "protein": round(per_serving.get("protein", 0))}
+        "per_serving": {"calories": per_serving.get("calories", 0),
+                        "protein": per_serving.get("protein", 0),
+                        "fat": per_serving.get("fat", 0),
+                        "carbs": per_serving.get("carbs", 0),
+                        "fiber": per_serving.get("fiber", 0)}
     }
 
 
@@ -994,20 +1103,22 @@ def get_nutrition_alerts(days: int = 3) -> str:
 
     # Calculate daily averages
     daily_avg = {
-        "calories": (row["total_calories"] or 0) / d,
-        "protein": (row["total_protein"] or 0) / d,
-        "fiber": (row["total_fiber"] or 0) / d,
-        "vitamin_b12": (row["total_b12"] or 0) / d,
-        "vitamin_d": (row["total_d"] or 0) / d,
-        "folate": (row["total_folate"] or 0) / d,
-        "iron": (row["total_iron"] or 0) / d,
-        "zinc": (row["total_zinc"] or 0) / d,
-        "magnesium": (row["total_magnesium"] or 0) / d,
-        "calcium": (row["total_calcium"] or 0) / d,
-        "potassium": (row["total_potassium"] or 0) / d,
-        "omega_3": (row["total_omega_3"] or 0) / d,
-        "vitamin_a": (row["total_vitamin_a"] or 0) / d,
-        "vitamin_c": (row["total_vitamin_c"] or 0) / d,
+        "calories": round((row["total_calories"] or 0) / d),
+        "protein": round((row["total_protein"] or 0) / d),
+        "fat": round((row["total_fat"] or 0) / d),
+        "carbs": round((row["total_carbs"] or 0) / d),
+        "fiber": round((row["total_fiber"] or 0) / d),
+        "vitamin_b12": round((row["total_b12"] or 0) / d, 1),
+        "vitamin_d": round((row["total_d"] or 0) / d),
+        "folate": round((row["total_folate"] or 0) / d),
+        "iron": round((row["total_iron"] or 0) / d, 1),
+        "zinc": round((row["total_zinc"] or 0) / d, 1),
+        "magnesium": round((row["total_magnesium"] or 0) / d),
+        "calcium": round((row["total_calcium"] or 0) / d),
+        "potassium": round((row["total_potassium"] or 0) / d),
+        "omega_3": round((row["total_omega_3"] or 0) / d, 1),
+        "vitamin_a": round((row["total_vitamin_a"] or 0) / d),
+        "vitamin_c": round((row["total_vitamin_c"] or 0) / d),
     }
 
     alerts = []
@@ -1018,7 +1129,9 @@ def get_nutrition_alerts(days: int = 3) -> str:
 
         if pct < 70:
             severity = "LOW" if pct >= 50 else "VERY LOW"
-            alerts.append(f"{nutrient}: {int(pct)}% of RDA ({severity})")
+            unit = target_info["unit"]
+            #alerts.append(f"{nutrient}: {int(pct)}% of RDA ({severity})")
+            alerts.append(f"{nutrient}: {actual}{unit}/day (target: {target}{unit}) - {int(pct)}% ({severity})")
 
     if not alerts:
         return "No nutrition alerts"

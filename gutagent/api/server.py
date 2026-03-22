@@ -18,13 +18,15 @@ from pydantic import BaseModel
 
 from gutagent.config import TOOLS, MAX_TOKENS, LLM_PROVIDER, get_model_for_tier
 from gutagent.profile import load_profile
-from gutagent.db.models import init_db
+from gutagent.db.models import init_db, set_rda_targets
 from gutagent.prompts.system import build_static_system_prompt, build_dynamic_context
 from gutagent.tools.registry import execute_tool
 
 
 # Initialize
 init_db()
+profile = load_profile()
+set_rda_targets(profile)
 
 app = FastAPI(title="GutAgent")
 
@@ -141,7 +143,7 @@ async def run_agent_streaming(
     recent_logs = session["recent_logs"]
     last_exchange = session["last_exchange"]
 
-    # Build system prompt
+    # Build system prompt with caching
     static_prompt = build_static_system_prompt(profile)
     dynamic_context = build_dynamic_context()
 
@@ -150,7 +152,11 @@ async def run_agent_streaming(
     if logs_context:
         dynamic_context = dynamic_context + "\n\n" + logs_context
 
-    system_prompt = static_prompt + "\n\n" + dynamic_context
+    # Use list format for prompt caching
+    system_prompt = [
+        {"type": "text", "text": static_prompt, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": dynamic_context}
+    ]
 
     # Messages for this turn - include last exchange for minimal context
     messages = []
@@ -208,6 +214,18 @@ async def run_agent_streaming(
         
             # Get final message for stop reason
             final_message = stream.get_final_message()
+
+        # After getting final_message, add token usage
+        if hasattr(final_message, 'usage') and final_message.usage:
+            usage = final_message.usage
+            usage_data = {
+                'type': 'usage',
+                'input_tokens': usage.input_tokens,
+                'output_tokens': usage.output_tokens,
+                'cache_creation_input_tokens': getattr(usage, 'cache_creation_input_tokens', 0),
+                'cache_read_input_tokens': getattr(usage, 'cache_read_input_tokens', 0),
+            }
+            yield f"data: {json.dumps(usage_data)}\n\n"
         
         if final_message.stop_reason == "tool_use":
             # Build content list with tool uses

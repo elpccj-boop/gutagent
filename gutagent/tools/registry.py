@@ -146,29 +146,32 @@ def _format_log_entry(entry: dict, table: str) -> str:
 def _handle_log_meal(input: dict) -> dict:
     """Log a meal with nutrition data from Claude's estimates or recipes."""
     items = input.get("items", [])
-    recipe_name = input.get("recipe_name")
 
-    # If a recipe name is provided, use its pre-calculated nutrition
-    if recipe_name:
-        recipe = get_recipe(recipe_name)
-        if recipe and recipe.get("nutrition"):
-            # Use recipe's pre-calculated nutrition directly
-            # Store recipe name as the single "item" for reference
-            meal_items = [{"food_name": recipe_name, "quantity": 1, "unit": "serving"}]
-            return log_meal_with_nutrition(
-                meal_type=input.get("meal_type"),
-                description=input["description"],
-                items=meal_items,
-                nutrition=recipe["nutrition"],
-                occurred_at=input.get("occurred_at"),
-            )
-
-    # Sum up nutrition from all items
+    # Sum up nutrition from all items (recipes or estimates)
     nutrition = {nutrient: 0 for nutrient in NUTRIENTS}
-
     meal_items = []
+
     for item in items:
-        # Add to nutrition totals
+        item_recipe_name = item.get("recipe_name")
+
+        # If item has a recipe, use recipe nutrition × quantity
+        if item_recipe_name:
+            recipe = get_recipe(item_recipe_name)
+            if recipe and recipe.get("nutrition"):
+                quantity = item.get("quantity", 1)
+                # Multiply recipe nutrition by quantity
+                for nutrient in NUTRIENTS:
+                    nutrition[nutrient] += recipe["nutrition"].get(nutrient, 0) * quantity
+
+                # Store recipe item
+                meal_items.append({
+                    "food_name": f"{item_recipe_name} (recipe)",
+                    "quantity": quantity,
+                    "unit": item.get("unit", "serving"),
+                })
+                continue
+
+        # Otherwise use provided nutrition estimates
         for nutrient in NUTRIENTS:
             nutrition[nutrient] += item.get(nutrient, 0)
 

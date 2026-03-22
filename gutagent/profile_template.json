@@ -2,6 +2,8 @@
   "personal": {
     "sex": "",
     "dob": "YYYY-MM-DD",
+    "height": "",
+    "weight": "",
     "notes": ""
   },
   "conditions": {

@@ -12,19 +12,25 @@ def load_profile() -> dict:
     with open(PROFILE_PATH, "r") as f:
         return json.load(f)
 
+
 def save_profile(profile: dict):
-    """Save updated profile."""
+    """Save updated profile and refresh RDA targets if needed."""
     os.makedirs(os.path.dirname(PROFILE_PATH), exist_ok=True)
     with open(PROFILE_PATH, "w") as f:
         json.dump(profile, f, indent=2)
+
+    # Refresh RDA targets with the profile we just saved
+    from gutagent.db.models import set_rda_targets
+    set_rda_targets(profile)  # No re-reading needed!
+
 
 def update_profile(section: str, action: str, value: str) -> dict:
     """
     Update a section of the profile.
 
-    section: dot-notation path like 'conditions.chronic' or 'lifestyle.notes'
-    action: 'append', 'set', or 'remove'
-    value: the value to add/set/remove
+    section: dot-notation path like 'conditions.chronic' or 'upcoming_appointments.elf_test'
+    action: 'append', 'set', 'remove', or 'delete'
+    value: the value to add/set/remove (not used for 'delete')
     """
     profile = load_profile()
 
@@ -61,6 +67,15 @@ def update_profile(section: str, action: str, value: str) -> dict:
             return {"error": f"No item matching '{value}' found in {section}"}
         save_profile(profile)
         return {"status": "removed", "section": section, "matched": value, "items_removed": removed}
+
+    elif action == "delete":
+        # Delete a dictionary key entirely
+        if final_key in parent:
+            del parent[final_key]
+            save_profile(profile)
+            return {"status": "deleted", "section": section, "key": final_key}
+        else:
+            return {"error": f"Key '{final_key}' not found in {'.'.join(keys[:-1])}"}
 
     else:
         return {"error": f"Unknown action: {action}"}

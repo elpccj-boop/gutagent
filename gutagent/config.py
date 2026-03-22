@@ -70,6 +70,10 @@ TOOLS = [
                             "name": {"type": "string", "description": "Food name"},
                             "quantity": {"type": "number", "description": "Amount"},
                             "unit": {"type": "string", "description": "Unit (piece, g, cup, tbsp)"},
+                            "recipe_name": {
+                                "type": "string",
+                                "description": "If matches saved recipe, specify recipe name (nutrition auto-calculated from recipe × quantity)"
+                            },
                             "calories": {"type": "number"},
                             "protein": {"type": "number", "description": "g"},
                             "carbs": {"type": "number", "description": "g"},
@@ -89,10 +93,6 @@ TOOLS = [
                         },
                         "required": ["name", "calories", "protein", "carbs", "fat"]
                     }
-                },
-                "recipe_name": {
-                    "type": "string",
-                    "description": "If matches saved recipe, use this to apply pre-calc nutrition."
                 },
                 "occurred_at": {
                     "type": "string",
@@ -121,21 +121,6 @@ TOOLS = [
         }
     },
     {
-        "name": "log_medication_event",
-        "description": "Log medication change (start/stop/dose change).",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "medication": {"type": "string"},
-                "event_type": {"type": "string", "enum": ["started", "stopped", "dose_changed"]},
-                "occurred_at": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
-                "dose": {"type": "string"},
-                "notes": {"type": "string"}
-            },
-            "required": ["medication", "event_type"]
-        }
-    },
-    {
         "name": "log_vital",
         "description": "Log vital sign (BP, weight, temp, HR, etc).",
         "input_schema": {
@@ -154,6 +139,76 @@ TOOLS = [
                 "notes": {"type": "string"}
             },
             "required": ["vital_type"]
+        }
+    },
+    {
+            "name": "log_lab",
+            "description": "Log lab test results.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "test_name": {"type": "string", "description": "Test name (e.g., B12, Ferritin, CRP)"},
+                    "test_date": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
+                    "value": {"type": "number"},
+                    "unit": {"type": "string", "description": "pg/mL, ng/mL, mg/dL, etc."},
+                    "reference_range": {"type": "string", "description": "e.g., '200-900 pg/mL'"},
+                    "status": {"type": "string", "enum": ["normal", "low", "high", "critical"]},
+                    "notes": {"type": "string"}
+                },
+                "required": ["test_name"]
+            }
+        },
+    {
+            "name": "log_medication_event",
+            "description": "Log medication change (start/stop/dose change).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "medication": {"type": "string"},
+                    "event_type": {"type": "string", "enum": ["started", "stopped", "dose_changed"]},
+                    "occurred_at": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
+                    "dose": {"type": "string"},
+                    "notes": {"type": "string"}
+                },
+                "required": ["medication", "event_type"]
+            }
+        },
+    {
+            "name": "log_sleep",
+            "description": "Log sleep hours and quality.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "hours": {"type": "number"},
+                    "quality": {"type": "string", "description": "good, poor, interrupted, restless, deep"},
+                    "occurred_at": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
+                    "notes": {"type": "string"}
+                }
+            }
+        },
+    {
+        "name": "log_exercise",
+        "description": "Log physical activity.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "activity": {"type": "string", "description": "walk, hike, gym, yoga, run, swim"},
+                "duration_minutes": {"type": "integer"},
+                "occurred_at": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
+                "notes": {"type": "string"}
+            },
+            "required": ["activity"]
+        }
+    },
+    {
+        "name": "log_journal",
+        "description": "Freeform journal entry for things that don't fit other categories.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string"}
+            },
+            "required": ["description"]
         }
     },
     {
@@ -222,59 +277,24 @@ TOOLS = [
     },
     {
         "name": "update_profile",
-        "description": "Update profile section (conditions, triggers, medications, suggestions, preferences).",
+        "description": "Update the user's medical profile. Use dot notation for nested fields (e.g., 'conditions.chronic', 'upcoming_appointments.elf_test'). Actions: 'append' (add to list), 'set' (replace value), 'remove' (remove from list), 'delete' (delete a dictionary key).",
         "input_schema": {
             "type": "object",
             "properties": {
                 "section": {
                     "type": "string",
-                    "description": "Path: 'conditions.chronic', 'triggers.confirmed_foods', 'suggestions.tests_to_request', etc."
+                    "description": "Dot-notation path (e.g., 'lifestyle.notes', 'conditions.chronic', 'upcoming_appointments.elf_test')"
                 },
                 "action": {
-                    "type": "string", "enum": ["set", "append", "remove"],
-                    "description": "set=replace, append=add to list, remove=delete from list"
+                    "type": "string", "enum": ["append", "set", "remove", "delete"],
+                    "description": "Action: append to list, set value, remove from list, or delete dict key"
                 },
-                "value": {"description": "New value or item to add/remove"}
+                "value": {
+                    "type": "string",
+                    "description": "Value to add, set, or remove (not used for 'delete')"
+                }
             },
             "required": ["section", "action", "value"]
-        }
-    },
-    {
-        "name": "log_sleep",
-        "description": "Log sleep hours and quality.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "hours": {"type": "number"},
-                "quality": {"type": "string", "description": "good, poor, interrupted, restless, deep"},
-                "occurred_at": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
-                "notes": {"type": "string"}
-            }
-        }
-    },
-    {
-        "name": "log_exercise",
-        "description": "Log physical activity.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "activity": {"type": "string", "description": "walk, hike, gym, yoga, run, swim"},
-                "duration_minutes": {"type": "integer"},
-                "occurred_at": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
-                "notes": {"type": "string"}
-            },
-            "required": ["activity"]
-        }
-    },
-    {
-        "name": "log_journal",
-        "description": "Freeform journal entry for things that don't fit other categories.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "description": {"type": "string"}
-            },
-            "required": ["description"]
         }
     },
     {
@@ -294,21 +314,21 @@ TOOLS = [
                             "quantity": {"type": "number"},
                             "unit": {"type": "string"},
                             "calories": {"type": "number"},
-                            "protein": {"type": "number"},
-                            "carbs": {"type": "number"},
-                            "fat": {"type": "number"},
-                            "fiber": {"type": "number"},
-                            "vitamin_b12": {"type": "number"},
-                            "vitamin_d": {"type": "number"},
-                            "folate": {"type": "number"},
-                            "iron": {"type": "number"},
-                            "zinc": {"type": "number"},
-                            "magnesium": {"type": "number"},
-                            "calcium": {"type": "number"},
-                            "potassium": {"type": "number"},
-                            "omega_3": {"type": "number"},
-                            "vitamin_a": {"type": "number"},
-                            "vitamin_c": {"type": "number"},
+                            "protein": {"type": "number", "description": "g"},
+                            "carbs": {"type": "number", "description": "g"},
+                            "fat": {"type": "number", "description": "g"},
+                            "fiber": {"type": "number", "description": "g"},
+                            "vitamin_b12": {"type": "number", "description": "μg"},
+                            "vitamin_d": {"type": "number", "description": "IU"},
+                            "folate": {"type": "number", "description": "μg"},
+                            "iron": {"type": "number", "description": "mg"},
+                            "zinc": {"type": "number", "description": "mg"},
+                            "magnesium": {"type": "number", "description": "mg"},
+                            "calcium": {"type": "number", "description": "mg"},
+                            "potassium": {"type": "number", "description": "mg"},
+                            "omega_3": {"type": "number", "description": "g"},
+                            "vitamin_a": {"type": "number", "description": "IU"},
+                            "vitamin_c": {"type": "number", "description": "mg"},
                         },
                         "required": ["name", "calories", "protein", "carbs", "fat"]
                     }
@@ -366,23 +386,6 @@ TOOLS = [
             "properties": {
                 "days": {"type": "integer", "description": "Days to analyze (default 3)"}
             }
-        }
-    },
-    {
-        "name": "log_lab",
-        "description": "Log lab test results.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "test_name": {"type": "string", "description": "Test name (e.g., B12, Ferritin, CRP)"},
-                "test_date": {"type": "string", "description": "YYYY-MM-DD HH:MM:SS. Infer from context."},
-                "value": {"type": "number"},
-                "unit": {"type": "string", "description": "pg/mL, ng/mL, mg/dL, etc."},
-                "reference_range": {"type": "string", "description": "e.g., '200-900 pg/mL'"},
-                "status": {"type": "string", "enum": ["normal", "low", "high", "critical"]},
-                "notes": {"type": "string"}
-            },
-            "required": ["test_name"]
         }
     },
 ]

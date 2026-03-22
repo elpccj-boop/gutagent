@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gutagent.agent import run_agent
 from gutagent.profile import load_profile
-from gutagent.db.models import init_db
+from gutagent.db.models import init_db, set_rda_targets
 from gutagent.config import get_model_for_tier, LLM_PROVIDER
 
 # Try to use rich for pretty output, fall back to plain text
@@ -29,6 +29,7 @@ try:
     HAS_RICH = True
 except ImportError:
     HAS_RICH = False
+
 
 def print_welcome_long():
     if HAS_RICH:
@@ -87,6 +88,7 @@ def print_welcome_long():
         print("    'Delete that last entry'")
         print("=" * 60 + "\n")
 
+
 def print_welcome():
     if HAS_RICH:
         console.print(Panel(
@@ -120,6 +122,7 @@ def main():
     # Initialize
     init_db()
     profile = load_profile()
+    set_rda_targets(profile)
     
     if "error" in profile:
         print(f"⚠️  {profile['error']}")
