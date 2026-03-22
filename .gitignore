@@ -1,8 +1,6 @@
-data/gutagent.db*
-data/scripts/
-data/profile.json
+data/
 reports/
-scratch/misc.txt
+scratch/
 temp/
 docs/SERVER_SETUP.md
 docs/MOBILE_ARCHITECTURE.md
