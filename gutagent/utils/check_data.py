@@ -3,21 +3,22 @@
 Usage:
     python -m gutagent.utils.check_data              # show all
     python -m gutagent.utils.check_data meals        # just meals
-    python -m gutagent.utils.check_data symptoms vitals  # symptoms and vitals
-    python -m gutagent.utils.check_data labs --status abnormal  # filter labs by status
-    python -m gutagent.utils.check_data vitals --days 7  # last 7 days only
-    python -m gutagent.utils.check_data nutrition    # nutrition summary + alerts
+    python -m gutagent.utils.check_data meals --days 3   # last 3 days
+    python -m gutagent.utils.check_data meals --full     # show items + all nutrition
+    python -m gutagent.utils.check_data symptoms vitals  # multiple sections
+    python -m gutagent.utils.check_data labs --status low  # filter labs
+    python -m gutagent.utils.check_data nutrition    # summary + alerts
     python -m gutagent.utils.check_data recipes      # saved recipes
 """
 
+import json
 import sqlite3
-import os
 import sys
 from datetime import datetime, timedelta
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "../..", "data", "gutagent.db")
+from gutagent.paths import DB_PATH
 
-SECTIONS = ["meals", "symptoms", "meds", "vitals", "labs", "sleep", "exercise", "journal", "recipes", "nutrition"]
+SECTIONS = ["meals", "symptoms", "vitals", "labs", "meds", "sleep", "exercise", "journal", "recipes", "nutrition"]
 
 
 def parse_args():
@@ -25,6 +26,7 @@ def parse_args():
     sections = []
     status_filter = None
     days_filter = None
+    full_mode = False
 
     i = 0
     while i < len(args):
@@ -34,6 +36,9 @@ def parse_args():
         elif args[i] == "--days" and i + 1 < len(args):
             days_filter = int(args[i + 1])
             i += 2
+        elif args[i] == "--full":
+            full_mode = True
+            i += 1
         else:
             sections.append(args[i])
             i += 1
@@ -41,124 +46,306 @@ def parse_args():
     if not sections:
         sections = SECTIONS
 
-    return sections, status_filter, days_filter
+    return sections, status_filter, days_filter, full_mode
 
 
-def show_meals(conn, days_filter):
-    print("\n--- Meals ---")
-    query = """
-        SELECT m.*, mn.calories, mn.protein, mn.carbs, mn.fat, mn.fiber
-        FROM meals m
-        LEFT JOIN meal_nutrition mn ON m.id = mn.meal_id
-        ORDER BY m.occurred_at
-    """
+def format_date(ts):
+    """Format timestamp for display."""
+    if not ts:
+        return "—"
+    return ts[:16] if len(ts) > 16 else ts
+
+
+def show_meals(conn, days_filter, full_mode):
+    print("\n━━━ Meals ━━━")
+
+    where = ""
+    params = []
     if days_filter:
         cutoff = (datetime.now() - timedelta(days=days_filter)).strftime("%Y-%m-%d")
-        query = f"""
-            SELECT m.*, mn.calories, mn.protein, mn.carbs, mn.fat, mn.fiber
-            FROM meals m
-            LEFT JOIN meal_nutrition mn ON m.id = mn.meal_id
-            WHERE m.occurred_at >= '{cutoff}'
-            ORDER BY m.occurred_at
-        """
-    for row in conn.execute(query):
-        nutrition = ""
-        if row['calories']:
-            nutrition = f" [{int(row['calories'])} cal, {int(row['protein'])}g protein]"
-        print(f"{row['id']}: {row['occurred_at']} | {row['meal_type']} | {row['description']}{nutrition}")
+        where = "WHERE m.occurred_at >= ?"
+        params = [cutoff]
+
+    query = f"""
+        SELECT m.id, m.occurred_at, m.meal_type, m.description,
+               mn.calories, mn.protein, mn.carbs, mn.fat, mn.fiber,
+               mn.vitamin_b12, mn.vitamin_d, mn.folate, mn.iron, mn.zinc,
+               mn.magnesium, mn.calcium, mn.potassium, mn.omega_3,
+               mn.vitamin_a, mn.vitamin_c
+        FROM meals m
+        LEFT JOIN meal_nutrition mn ON m.id = mn.meal_id
+        {where}
+        ORDER BY m.occurred_at DESC
+    """
+
+    meals = conn.execute(query, params).fetchall()
+
+    if not meals:
+        print("  No meals found.")
+        return
+
+    for meal in meals:
+        # Basic info line
+        meal_type = meal['meal_type'] or 'meal'
+        cal = int(meal['calories']) if meal['calories'] else 0
+        pro = int(meal['protein']) if meal['protein'] else 0
+
+        print(f"\n[{meal['id']}] {format_date(meal['occurred_at'])} | {meal_type}")
+        print(f"    {meal['description']}")
+
+        if cal:
+            carbs = int(meal['carbs']) if meal['carbs'] else 0
+            fat = int(meal['fat']) if meal['fat'] else 0
+            fiber = int(meal['fiber']) if meal['fiber'] else 0
+            print(f"    {cal} cal | {pro}g protein | {carbs}g carbs | {fat}g fat | {fiber}g fiber")
+
+        if full_mode:
+            # Show meal items
+            items = conn.execute(
+                "SELECT food_name, quantity, unit FROM meal_items WHERE meal_id = ?",
+                (meal['id'],)
+            ).fetchall()
+
+            if items:
+                print("    Items:")
+                for item in items:
+                    qty = f"{item['quantity']}" if item['quantity'] else ""
+                    unit = item['unit'] or ""
+                    print(f"      • {item['food_name']} {qty} {unit}".rstrip())
+
+            # Show micronutrients if present
+            if meal['vitamin_b12'] or meal['iron'] or meal['calcium']:
+                print("    Micronutrients:")
+                micros = []
+                if meal['vitamin_b12']: micros.append(f"B12: {meal['vitamin_b12']:.1f}μg")
+                if meal['vitamin_d']: micros.append(f"D: {meal['vitamin_d']:.0f}IU")
+                if meal['folate']: micros.append(f"Folate: {meal['folate']:.0f}μg")
+                if meal['iron']: micros.append(f"Iron: {meal['iron']:.1f}mg")
+                if meal['zinc']: micros.append(f"Zinc: {meal['zinc']:.1f}mg")
+                if meal['magnesium']: micros.append(f"Mg: {meal['magnesium']:.0f}mg")
+                if meal['calcium']: micros.append(f"Ca: {meal['calcium']:.0f}mg")
+                if meal['potassium']: micros.append(f"K: {meal['potassium']:.0f}mg")
+                if meal['omega_3']: micros.append(f"Ω3: {meal['omega_3']:.1f}g")
+                if meal['vitamin_a']: micros.append(f"A: {meal['vitamin_a']:.0f}IU")
+                if meal['vitamin_c']: micros.append(f"C: {meal['vitamin_c']:.0f}mg")
+                # Print in rows of 4
+                for i in range(0, len(micros), 4):
+                    print(f"      {' | '.join(micros[i:i+4])}")
+
+    print(f"\n  Total: {len(meals)} meals")
 
 
 def show_symptoms(conn, days_filter):
-    print("\n--- Symptoms ---")
-    query = "SELECT * FROM symptoms ORDER BY occurred_at"
+    print("\n━━━ Symptoms ━━━")
+
+    where = ""
+    params = []
     if days_filter:
         cutoff = (datetime.now() - timedelta(days=days_filter)).strftime("%Y-%m-%d")
-        query = f"SELECT * FROM symptoms WHERE occurred_at >= '{cutoff}' ORDER BY occurred_at"
-    for row in conn.execute(query):
-        print(f"{row['id']}: {row['occurred_at']} | {row['symptom']} | severity: {row['severity']} | {row['notes'] or ''}")
+        where = "WHERE occurred_at >= ?"
+        params = [cutoff]
+
+    rows = conn.execute(
+        f"SELECT * FROM symptoms {where} ORDER BY occurred_at DESC", params
+    ).fetchall()
+
+    if not rows:
+        print("  No symptoms found.")
+        return
+
+    for row in rows:
+        notes = f" — {row['notes']}" if row['notes'] else ""
+        print(f"[{row['id']}] {format_date(row['occurred_at'])} | {row['symptom']} (severity {row['severity']}){notes}")
+
+    print(f"\n  Total: {len(rows)} entries")
 
 
 def show_meds(conn, days_filter):
-    print("\n--- Medication Events ---")
-    query = "SELECT * FROM medications ORDER BY occurred_at"
+    print("\n━━━ Medications ━━━")
+
+    where = ""
+    params = []
     if days_filter:
         cutoff = (datetime.now() - timedelta(days=days_filter)).strftime("%Y-%m-%d")
-        query = f"SELECT * FROM medications WHERE occurred_at >= '{cutoff}' ORDER BY occurred_at"
-    for row in conn.execute(query):
-        print(f"{row['id']}: {row['occurred_at']} | {row['medication']} | {row['event_type']} | {row['dose'] or ''} | {row['notes'] or ''}")
+        where = "WHERE occurred_at >= ?"
+        params = [cutoff]
+
+    rows = conn.execute(
+        f"SELECT * FROM medications {where} ORDER BY occurred_at DESC", params
+    ).fetchall()
+
+    if not rows:
+        print("  No medication events found.")
+        return
+
+    for row in rows:
+        dose = f" ({row['dose']})" if row['dose'] else ""
+        notes = f" — {row['notes']}" if row['notes'] else ""
+        print(f"[{row['id']}] {format_date(row['occurred_at'])} | {row['medication']}{dose} [{row['event_type']}]{notes}")
+
+    print(f"\n  Total: {len(rows)} events")
 
 
 def show_vitals(conn, days_filter):
-    print("\n--- Vitals ---")
-    query = "SELECT * FROM vitals ORDER BY occurred_at"
+    print("\n━━━ Vitals ━━━")
+
+    where = ""
+    params = []
     if days_filter:
         cutoff = (datetime.now() - timedelta(days=days_filter)).strftime("%Y-%m-%d")
-        query = f"SELECT * FROM vitals WHERE occurred_at >= '{cutoff}' ORDER BY occurred_at"
-    for row in conn.execute(query):
+        where = "WHERE occurred_at >= ?"
+        params = [cutoff]
+
+    rows = conn.execute(
+        f"SELECT * FROM vitals {where} ORDER BY occurred_at DESC", params
+    ).fetchall()
+
+    if not rows:
+        print("  No vitals found.")
+        return
+
+    for row in rows:
+        notes = f" — {row['notes']}" if row['notes'] else ""
         if row['vital_type'] == 'blood_pressure':
-            print(f"{row['id']}: {row['occurred_at']} | BP: {row['systolic']}/{row['diastolic']} HR:{row['heart_rate']} | {row['notes'] or ''}")
+            hr = f" HR:{row['heart_rate']}" if row['heart_rate'] else ""
+            print(f"[{row['id']}] {format_date(row['occurred_at'])} | BP: {row['systolic']}/{row['diastolic']}{hr}{notes}")
         else:
-            print(f"{row['id']}: {row['occurred_at']} | {row['vital_type']}: {row['value']} {row['unit']} | {row['notes'] or ''}")
+            unit = row['unit'] or ""
+            print(f"[{row['id']}] {format_date(row['occurred_at'])} | {row['vital_type']}: {row['value']} {unit}{notes}")
+
+    print(f"\n  Total: {len(rows)} readings")
 
 
 def show_labs(conn, status_filter):
-    print("\n--- Labs ---")
-    query = "SELECT * FROM labs ORDER BY test_date, status"
+    print("\n━━━ Labs ━━━")
+
+    where = ""
+    params = []
     if status_filter:
-        query = f"SELECT * FROM labs WHERE status = '{status_filter}' ORDER BY test_date, test_name"
-    for row in conn.execute(query):
+        where = "WHERE status = ?"
+        params = [status_filter]
+
+    rows = conn.execute(
+        f"SELECT * FROM labs {where} ORDER BY test_date DESC, test_name", params
+    ).fetchall()
+
+    if not rows:
+        print("  No lab results found.")
+        return
+
+    for row in rows:
         val = f"{row['value']} {row['unit']}" if row['value'] else "—"
-        ref = f"(ref: {row['reference_range']})" if row['reference_range'] else ""
-        notes = f"| {row['notes']}" if row['notes'] else ""
-        print(f"{row['test_date']} | {row['test_name']}: {val} {ref} [{row['status']}] {notes}")
+        ref = f" (ref: {row['reference_range']})" if row['reference_range'] else ""
+        status = f" [{row['status']}]" if row['status'] else ""
+        notes = f" — {row['notes']}" if row['notes'] else ""
+        print(f"[{row['id']}] {row['test_date']} | {row['test_name']}: {val}{ref}{status}{notes}")
+
+    print(f"\n  Total: {len(rows)} results")
 
 
 def show_sleep(conn, days_filter):
-    print("\n--- Sleep ---")
-    query = "SELECT * FROM sleep ORDER BY occurred_at"
+    print("\n━━━ Sleep ━━━")
+
+    where = ""
+    params = []
     if days_filter:
         cutoff = (datetime.now() - timedelta(days=days_filter)).strftime("%Y-%m-%d")
-        query = f"SELECT * FROM sleep WHERE occurred_at >= '{cutoff}' ORDER BY occurred_at"
-    for row in conn.execute(query):
-        hours = f"{row['hours']} hrs" if row['hours'] else ""
-        quality = row['quality'] or ""
-        print(f"{row['id']}: {row['occurred_at']} | {hours} {quality} | {row['notes'] or ''}")
+        where = "WHERE occurred_at >= ?"
+        params = [cutoff]
+
+    rows = conn.execute(
+        f"SELECT * FROM sleep {where} ORDER BY occurred_at DESC", params
+    ).fetchall()
+
+    if not rows:
+        print("  No sleep entries found.")
+        return
+
+    for row in rows:
+        hours = f"{row['hours']} hrs" if row['hours'] else "?"
+        quality = f", {row['quality']}" if row['quality'] else ""
+        notes = f" — {row['notes']}" if row['notes'] else ""
+        print(f"[{row['id']}] {format_date(row['occurred_at'])} | {hours}{quality}{notes}")
+
+    print(f"\n  Total: {len(rows)} entries")
 
 
 def show_exercise(conn, days_filter):
-    print("\n--- Exercise ---")
-    query = "SELECT * FROM exercise ORDER BY occurred_at"
+    print("\n━━━ Exercise ━━━")
+
+    where = ""
+    params = []
     if days_filter:
         cutoff = (datetime.now() - timedelta(days=days_filter)).strftime("%Y-%m-%d")
-        query = f"SELECT * FROM exercise WHERE occurred_at >= '{cutoff}' ORDER BY occurred_at"
-    for row in conn.execute(query):
-        duration = f"({row['duration_minutes']} min)" if row['duration_minutes'] else ""
-        print(f"{row['id']}: {row['occurred_at']} | {row['activity']} {duration} | {row['notes'] or ''}")
+        where = "WHERE occurred_at >= ?"
+        params = [cutoff]
+
+    rows = conn.execute(
+        f"SELECT * FROM exercise {where} ORDER BY occurred_at DESC", params
+    ).fetchall()
+
+    if not rows:
+        print("  No exercise entries found.")
+        return
+
+    for row in rows:
+        duration = f" ({row['duration_minutes']} min)" if row['duration_minutes'] else ""
+        notes = f" — {row['notes']}" if row['notes'] else ""
+        print(f"[{row['id']}] {format_date(row['occurred_at'])} | {row['activity']}{duration}{notes}")
+
+    print(f"\n  Total: {len(rows)} entries")
 
 
 def show_journal(conn, days_filter):
-    print("\n--- Journal ---")
-    query = "SELECT * FROM journal ORDER BY logged_at"
+    print("\n━━━ Journal ━━━")
+
+    where = ""
+    params = []
     if days_filter:
         cutoff = (datetime.now() - timedelta(days=days_filter)).strftime("%Y-%m-%d")
-        query = f"SELECT * FROM journal WHERE logged_at >= '{cutoff}' ORDER BY logged_at"
-    for row in conn.execute(query):
-        desc = row['description'][:80] + "..." if len(row['description']) > 80 else row['description']
-        print(f"{row['id']}: {row['logged_at']} | {desc}")
+        where = "WHERE logged_at >= ?"
+        params = [cutoff]
+
+    rows = conn.execute(
+        f"SELECT * FROM journal {where} ORDER BY logged_at DESC", params
+    ).fetchall()
+
+    if not rows:
+        print("  No journal entries found.")
+        return
+
+    for row in rows:
+        desc = row['description'][:100] + "..." if len(row['description']) > 100 else row['description']
+        print(f"[{row['id']}] {format_date(row['logged_at'])} | {desc}")
+
+    print(f"\n  Total: {len(rows)} entries")
 
 
 def show_recipes(conn, days_filter):
-    print("\n--- Recipes ---")
-    query = "SELECT * FROM recipes ORDER BY name"
-    for row in conn.execute(query):
-        import json
+    print("\n━━━ Recipes ━━━")
+
+    rows = conn.execute("SELECT * FROM recipes ORDER BY name").fetchall()
+
+    if not rows:
+        print("  No recipes saved.")
+        return
+
+    for row in rows:
         ingredients = json.loads(row['ingredients'])
-        ingredient_names = [i.get('name', '?') for i in ingredients]
-        print(f"{row['id']}: {row['name']} | {len(ingredients)} ingredients: {', '.join(ingredient_names[:5])}{'...' if len(ingredient_names) > 5 else ''}")
+        names = [i.get('name', '?') for i in ingredients]
+        servings = f" ({row['servings']} servings)" if row['servings'] and row['servings'] != 1 else ""
+        cal = int(row['calories']) if row['calories'] else 0
+        pro = int(row['protein']) if row['protein'] else 0
+
+        print(f"\n[{row['id']}] {row['name']}{servings}")
+        print(f"    Per serving: {cal} cal, {pro}g protein")
+        print(f"    Ingredients: {', '.join(names[:6])}{'...' if len(names) > 6 else ''}")
+
+    print(f"\n  Total: {len(rows)} recipes")
 
 
 def show_nutrition(conn, days_filter):
-    print("\n--- Nutrition Summary ---")
+    print("\n━━━ Nutrition Summary ━━━")
     days = days_filter or 3
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -187,7 +374,7 @@ def show_nutrition(conn, days_filter):
     """, (cutoff,)).fetchone()
 
     if not row or not row['days_with_data']:
-        print(f"No nutrition data in the last {days} days.")
+        print(f"  No nutrition data in the last {days} days.")
         return
 
     d = row['days_with_data']
@@ -196,56 +383,52 @@ def show_nutrition(conn, days_filter):
     def avg(v):
         return round(v / d, 1) if v and d else 0
 
-    print("Macros:")
-    print(f"  Calories:   {avg(row['total_cal'])} / day")
-    print(f"  Protein:    {avg(row['total_protein'])}g / day")
-    print(f"  Carbs:      {avg(row['total_carbs'])}g / day")
-    print(f"  Fat:        {avg(row['total_fat'])}g / day")
-    print(f"  Fiber:      {avg(row['total_fiber'])}g / day (target: 25g)")
-    print()
-    print("Micronutrients:")
-    print(f"  Vitamin B12: {avg(row['total_b12'])}μg / day (target: 2.4μg)")
-    print(f"  Vitamin D:   {avg(row['total_d'])}μg / day (target: 15μg)")
-    print(f"  Folate:      {avg(row['total_folate'])}μg / day (target: 400μg)")
-    print(f"  Iron:        {avg(row['total_iron'])}mg / day (target: 8mg)")
-    print(f"  Zinc:        {avg(row['total_zinc'])}mg / day (target: 11mg)")
-    print(f"  Magnesium:   {avg(row['total_mag'])}mg / day (target: 400mg)")
-    print(f"  Calcium:     {avg(row['total_calcium'])}mg / day (target: 1000mg)")
-    print(f"  Potassium:   {avg(row['total_potassium'])}mg / day (target: 2600mg)")
-    print(f"  Omega-3:     {avg(row['total_omega3'])}g / day (target: 1.6g)")
-    print(f"  Vitamin A:   {avg(row['total_a'])}μg / day (target: 900μg)")
-    print(f"  Vitamin C:   {avg(row['total_c'])}mg / day (target: 90mg)")
+    print("Macros (daily avg):")
+    print(f"  Calories:  {avg(row['total_cal']):.0f}")
+    print(f"  Protein:   {avg(row['total_protein']):.0f}g")
+    print(f"  Carbs:     {avg(row['total_carbs']):.0f}g")
+    print(f"  Fat:       {avg(row['total_fat']):.0f}g")
+    print(f"  Fiber:     {avg(row['total_fiber']):.0f}g (target: 25g)")
+
+    print("\nMicronutrients (daily avg):")
+    print(f"  B12:       {avg(row['total_b12']):.1f}μg (target: 2.4μg)")
+    print(f"  Vitamin D: {avg(row['total_d']):.0f}IU (target: 600IU)")
+    print(f"  Folate:    {avg(row['total_folate']):.0f}μg (target: 400μg)")
+    print(f"  Iron:      {avg(row['total_iron']):.1f}mg (target: 8mg)")
+    print(f"  Zinc:      {avg(row['total_zinc']):.1f}mg (target: 11mg)")
+    print(f"  Magnesium: {avg(row['total_mag']):.0f}mg (target: 400mg)")
+    print(f"  Calcium:   {avg(row['total_calcium']):.0f}mg (target: 1000mg)")
+    print(f"  Potassium: {avg(row['total_potassium']):.0f}mg (target: 2600mg)")
+    print(f"  Omega-3:   {avg(row['total_omega3']):.1f}g (target: 1.6g)")
+    print(f"  Vitamin A: {avg(row['total_a']):.0f}IU (target: 3000IU)")
+    print(f"  Vitamin C: {avg(row['total_c']):.0f}mg (target: 90mg)")
 
     # Show alerts
-    print("\n--- Nutrition Alerts ---")
-    from gutagent.db.models import get_nutrition_alerts
+    print("\n━━━ Alerts ━━━")
+    from gutagent.db import get_nutrition_alerts
     alerts = get_nutrition_alerts(days)
-    if not alerts:
-        print("  No deficiencies or excesses detected.")
+    if alerts == "No nutrition alerts":
+        print("  ✓ No deficiencies or excesses detected.")
     else:
-        for a in alerts:
-            name = a['nutrient'].replace('_', ' ').title()
-            if a['type'] == 'deficiency':
-                severity = "⚠️" if a['severity'] == 'low' else "🔴"
-                print(f"  {severity} Low {name}: {a['daily_average']}{a['unit']}/day ({a['percent_of_rda']}% of {a['target']}{a['unit']} target)")
-            else:  # excess
-                severity = "⚠️" if a['severity'] == 'high' else "🔴"
-                print(f"  {severity} High {name}: {a['daily_average']}{a['unit']}/day (exceeds {a['upper_limit']}{a['unit']} safe limit)")
+        # Strip header and print each line
+        for line in alerts.split("\n"):
+            if line and not line.startswith("==="):
+                print(f"  ⚠️  {line}")
 
 
 def main():
-    sections, status_filter, days_filter = parse_args()
+    sections, status_filter, days_filter, full_mode = parse_args()
 
-    if not os.path.exists(DB_PATH):
+    if not DB_PATH.exists():
         print(f"Database not found: {DB_PATH}")
         sys.exit(1)
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
 
     for section in sections:
         if section == "meals":
-            show_meals(conn, days_filter)
+            show_meals(conn, days_filter, full_mode)
         elif section == "symptoms":
             show_symptoms(conn, days_filter)
         elif section == "meds":
@@ -265,7 +448,8 @@ def main():
         elif section == "nutrition":
             show_nutrition(conn, days_filter)
         else:
-            print(f"Unknown section: {section}. Options: {', '.join(SECTIONS)}")
+            print(f"Unknown section: {section}")
+            print(f"Options: {', '.join(SECTIONS)}")
 
     conn.close()
 
