@@ -41,7 +41,7 @@ def main():
         s.connect(("8.8.8.8", 80))
         local_ip = s.getsockname()[0]
         s.close()
-    except:
+    except OSError:
         local_ip = "localhost"
     
     # Check auth status

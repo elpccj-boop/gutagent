@@ -1,7 +1,7 @@
 """Tool registry — maps tool names to their implementations."""
 
 import json
-from gutagent.db.models import (
+from gutagent.db import (
     log_meal_with_nutrition,
     log_symptom,
     log_vital,

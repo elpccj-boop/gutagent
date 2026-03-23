@@ -3,24 +3,32 @@
 import json
 import os
 import secrets
-from pathlib import Path
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-load_dotenv()  # Load .env file
+load_dotenv()
 
-from fastapi import FastAPI, Request, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
-from gutagent.config import TOOLS, MAX_TOKENS, LLM_PROVIDER, get_model_for_tier
+from gutagent.config import TOOLS, MAX_TOKENS, get_model_for_tier
 from gutagent.profile import load_profile
-from gutagent.db.models import init_db, set_rda_targets
-from gutagent.prompts.system import build_static_system_prompt, build_dynamic_context
+from gutagent.db import init_db, set_rda_targets
 from gutagent.tools.registry import execute_tool
+from gutagent.core import (
+    LOG_TOOLS,
+    MAX_ITERATIONS,
+    format_recent_logs,
+    build_messages,
+    track_log_operation,
+    finalize_turn,
+)
+from gutagent.prompts.system import build_static_system_prompt, build_dynamic_context
+from gutagent.paths import WEB_DIR
 
 
 # Initialize
@@ -37,9 +45,9 @@ security = HTTPBasic()
 AUTH_USERNAME = os.getenv("GUTAGENT_USERNAME", "")
 AUTH_PASSWORD = os.getenv("GUTAGENT_PASSWORD", "")
 
+
 def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
     """Verify username and password."""
-    # If no credentials configured, skip auth (local development)
     if not AUTH_USERNAME or not AUTH_PASSWORD:
         return True
 
@@ -54,6 +62,7 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
         )
     return True
 
+
 # CORS for local development
 app.add_middleware(
     CORSMiddleware,
@@ -63,60 +72,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Session storage for recent_logs and last_exchange (for corrections)
-# Keyed by session_id, stores {"recent_logs": {...}, "last_exchange": {...}}
+# Session storage for recent_logs and last_exchange
 sessions: dict[str, dict] = {}
-
-
-# Tools that create log entries — we track their results for edit context
-LOG_TOOLS = {
-    "log_meal": "meals",
-    "log_symptom": "symptoms",
-    "log_vital": "vitals",
-    "log_lab": "labs",
-    "log_medication_event": "medications",
-    "log_sleep": "sleep",
-    "log_exercise": "exercise",
-    "log_journal": "journal",
-}
 
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: str = "default"  # For tracking recent_logs/last_exchange
-    model: str = "default"  # "default" (fast/cheap) or "smart" (capable)
+    session_id: str = "default"
+    model: str = "default"
     show_tools: bool = False
-
-
-def get_model(tier: str) -> str:
-    """Get model string for the current provider and tier."""
-    return get_model_for_tier(tier)
-
-
-def format_recent_logs(recent_logs: dict) -> str:
-    """Format recent_logs dict into a string for the prompt."""
-    if not recent_logs:
-        return ""
-
-    lines = ["Recently logged (available for edits):"]
-    for table, entries in recent_logs.items():
-        for entry in entries:
-            entry_id = entry.get("id", "?")
-            desc = (
-                entry.get("summary") or
-                entry.get("description") or
-                entry.get("symptom") or
-                entry.get("vital_type") or
-                entry.get("type") or
-                entry.get("reading") or
-                entry.get("test_name") or
-                entry.get("medication") or
-                entry.get("event_type") or
-                str(entry)[:50]
-            )
-            lines.append(f"  [{table}] id:{entry_id} — {desc}")
-
-    return "\n".join(lines)
 
 
 async def run_agent_streaming(
@@ -130,7 +94,7 @@ async def run_agent_streaming(
     Streaming version of the agent loop.
     Yields Server-Sent Events as Claude generates responses.
 
-    Tracks recent_logs and last_exchange per session for corrections.
+    Note: Currently Claude-only. Provider abstraction for streaming not yet implemented.
     """
     import anthropic
     client = anthropic.Anthropic()
@@ -143,40 +107,33 @@ async def run_agent_streaming(
     recent_logs = session["recent_logs"]
     last_exchange = session["last_exchange"]
 
-    # Build system prompt with caching
+    # Build system prompt
     static_prompt = build_static_system_prompt(profile)
     dynamic_context = build_dynamic_context()
 
-    # Add recent logs context if we have any
     logs_context = format_recent_logs(recent_logs)
     if logs_context:
         dynamic_context = dynamic_context + "\n\n" + logs_context
 
-    # Use list format for prompt caching
+    # Use list format for Claude prompt caching
     system_prompt = [
         {"type": "text", "text": static_prompt, "cache_control": {"type": "ephemeral"}},
         {"type": "text", "text": dynamic_context}
     ]
 
-    # Messages for this turn - include last exchange for minimal context
-    messages = []
-    if last_exchange.get("user") and last_exchange.get("assistant"):
-        messages.append({"role": "user", "content": last_exchange["user"]})
-        messages.append({"role": "assistant", "content": last_exchange["assistant"]})
-    messages.append({"role": "user", "content": user_message})
+    # Build messages using shared logic
+    messages = build_messages(user_message, last_exchange)
 
     # Track logs created this turn
     logs_this_turn = {}
-    
-    max_iterations = 10
+
     iteration = 0
     
-    while iteration < max_iterations:
+    while iteration < MAX_ITERATIONS:
         iteration += 1
         
         # Stream from Claude
         current_text = ""
-        tool_uses = []
 
         with client.messages.stream(
             model=model,
@@ -190,32 +147,21 @@ async def run_agent_streaming(
                     if event.content_block.type == "text":
                         current_text = ""
                     elif event.content_block.type == "tool_use":
-                        tool_uses.append({
-                            "id": event.content_block.id,
-                            "name": event.content_block.name,
-                            "input": "",
-                        })
                         if show_tools:
                             yield f"data: {json.dumps({'type': 'tool_start', 'name': event.content_block.name})}\n\n"
 
                 elif event.type == "content_block_delta":
                     if event.delta.type == "text_delta":
                         current_text += event.delta.text
-                        # Stream text chunks to client
                         yield f"data: {json.dumps({'type': 'text', 'content': event.delta.text})}\n\n"
-                    elif event.delta.type == "input_json_delta":
-                        # Accumulate tool input JSON
-                        if tool_uses:
-                            tool_uses[-1]["input"] += event.delta.partial_json
 
                 elif event.type == "content_block_stop":
                     if current_text:
                         current_text = ""
-        
-            # Get final message for stop reason
+
             final_message = stream.get_final_message()
 
-        # After getting final_message, add token usage
+        # Send token usage
         if hasattr(final_message, 'usage') and final_message.usage:
             usage = final_message.usage
             usage_data = {
@@ -251,14 +197,14 @@ async def run_agent_streaming(
             for block in final_message.content:
                 if block.type == "tool_use":
                     tool_name = block.name
+                    tool_input = block.input
 
                     if show_tools:
-                        yield f"data: {json.dumps({'type': 'tool_call', 'name': tool_name, 'input': block.input})}\n\n"
+                        yield f"data: {json.dumps({'type': 'tool_call', 'name': tool_name, 'input': tool_input})}\n\n"
 
-                    result = execute_tool(tool_name, block.input)
+                    result = execute_tool(tool_name, tool_input)
 
                     if show_tools:
-                        # Truncate for display
                         display_result = result[:300] + "..." if len(result) > 300 else result
                         yield f"data: {json.dumps({'type': 'tool_result', 'name': tool_name, 'result': display_result})}\n\n"
 
@@ -268,25 +214,14 @@ async def run_agent_streaming(
                         "content": result,
                     })
 
-                    # Track log operations
-                    if tool_name in LOG_TOOLS:
-                        table = LOG_TOOLS[tool_name]
-                        try:
-                            entry = json.loads(result)
-                            if "id" in entry:
-                                if table not in logs_this_turn:
-                                    logs_this_turn[table] = []
-                                logs_this_turn[table].append(entry)
-                        except (json.JSONDecodeError, TypeError):
-                            pass
+                    # Track log operations using shared logic
+                    track_log_operation(tool_name, tool_input, result, recent_logs, logs_this_turn)
 
-            # Add tool results to messages for next iteration
             messages.append({
                 "role": "user",
                 "content": tool_results,
             })
-            
-            # Continue loop
+
         else:
             # Final text response
             response_text = ""
@@ -294,29 +229,28 @@ async def run_agent_streaming(
                 if hasattr(block, "text"):
                     response_text += block.text
 
-            # Update session state
-            for table, entries in logs_this_turn.items():
-                recent_logs[table] = entries
+            # Finalize turn using shared logic
+            new_last_exchange = finalize_turn(
+                user_message=user_message,
+                response_text=response_text,
+                recent_logs=recent_logs,
+                logs_this_turn=logs_this_turn,
+            )
             
             session["recent_logs"] = recent_logs
-            session["last_exchange"] = {
-                "user": user_message,
-                "assistant": response_text[:500]
-            }
+            session["last_exchange"] = new_last_exchange
 
-            # Signal end of stream
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
-    
-    # Safety: max iterations reached
+
     yield f"data: {json.dumps({'type': 'error', 'message': 'Max iterations reached'})}\n\n"
 
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest, authenticated: bool = Depends(verify_credentials)):
-    """Stream a chat response. Tracks recent_logs and last_exchange for corrections."""
+    """Stream a chat response."""
     profile = load_profile()
-    model = get_model(request.model)
+    model = get_model_for_tier(request.model)
     
     return StreamingResponse(
         run_agent_streaming(
@@ -346,15 +280,14 @@ async def get_context(authenticated: bool = Depends(verify_credentials)):
 
 
 @app.get("/api/profile")
-async def get_profile(authenticated: bool = Depends(verify_credentials)):
+async def get_profile_endpoint(authenticated: bool = Depends(verify_credentials)):
     """Get the user profile."""
     return load_profile()
 
 
 # Serve static files (web UI)
-web_dir = Path(__file__).parent.parent / "web"
-if web_dir.exists():
-    app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
+if WEB_DIR.exists():
+    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
 
 
 def main():

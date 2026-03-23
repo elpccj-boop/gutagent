@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gutagent.agent import run_agent
 from gutagent.profile import load_profile
-from gutagent.db.models import init_db, set_rda_targets
+from gutagent.db import init_db, set_rda_targets
 from gutagent.config import get_model_for_tier, LLM_PROVIDER
 
 # Try to use rich for pretty output, fall back to plain text

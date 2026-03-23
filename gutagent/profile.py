@@ -1,13 +1,13 @@
 """Medical profile management."""
 
 import json
-import os
 
-PROFILE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "profile.json")
+from gutagent.paths import PROFILE_PATH, ensure_data_dir
+
 
 def load_profile() -> dict:
     """Load the medical profile from JSON."""
-    if not os.path.exists(PROFILE_PATH):
+    if not PROFILE_PATH.exists():
         return {"error": "Profile not found. Create data/profile.json with your medical data."}
     with open(PROFILE_PATH, "r") as f:
         return json.load(f)
@@ -15,13 +15,13 @@ def load_profile() -> dict:
 
 def save_profile(profile: dict):
     """Save updated profile and refresh RDA targets if needed."""
-    os.makedirs(os.path.dirname(PROFILE_PATH), exist_ok=True)
+    ensure_data_dir()
     with open(PROFILE_PATH, "w") as f:
         json.dump(profile, f, indent=2)
 
     # Refresh RDA targets with the profile we just saved
-    from gutagent.db.models import set_rda_targets
-    set_rda_targets(profile)  # No re-reading needed!
+    from gutagent.db import set_rda_targets
+    set_rda_targets(profile)
 
 
 def update_profile(section: str, action: str, value: str) -> dict:
