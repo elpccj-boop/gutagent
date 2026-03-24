@@ -8,6 +8,7 @@ Usage:
 
 import sys
 import os
+from datetime import datetime
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -139,10 +140,11 @@ def main():
 
     while True:
         try:
+            ts = datetime.now().strftime("%H:%M:%S")
             if HAS_RICH:
-                user_input = console.input("[bold cyan]You:[/bold cyan] ").strip()
+                user_input = console.input(f"[dim]{ts}[/dim] [bold cyan]You:[/bold cyan] ").strip()
             else:
-                user_input = input("You: ").strip()
+                user_input = input(f"{ts} You: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye! Remember to eat well. 💚")
             break

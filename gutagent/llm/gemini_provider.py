@@ -136,7 +136,17 @@ class GeminiProvider(BaseLLMProvider):
                     })
         
         stop_reason = "tool_use" if has_tool_calls else "end_turn"
-        return LLMResponse(content=content, stop_reason=stop_reason)
+
+        # Extract token usage if available
+        usage = None
+        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+            um = response.usage_metadata
+            usage = {
+                "input_tokens": getattr(um, 'prompt_token_count', 0),
+                "output_tokens": getattr(um, 'candidates_token_count', 0),
+            }
+
+        return LLMResponse(content=content, stop_reason=stop_reason, usage=usage)
     
     def chat_stream(
         self,

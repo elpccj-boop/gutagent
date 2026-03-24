@@ -2,6 +2,7 @@
 
 ## Now (Technical Debt)
 
+- [ ] Investigate static prompt size (cache_create=6383 tokens, was ~6215)
 - [ ] Add integration tests for `agent.py`
 - [ ] Add API endpoint tests
 
@@ -12,6 +13,7 @@
 
 ## Later (Nice to Have)
 
+- [ ] Add context caching for Gemini provider
 - [ ] Offline queue for web UI
 - [ ] Permanent URL (purchase domain for Cloudflare)
 
@@ -24,6 +26,9 @@
 
 
 ## Done
+- [x] Add token usage reporting for Gemini provider
+- [x] Add timestamp to CLI display (helps debug cache expiry)
+- [x] Fix vitals context bug ('str' object has no attribute 'get')
 - [x] Extract shared code from `agent.py` and `server.py` into `core.py`
 - [x] Split `models.py` into focused modules (connection, common, logs, recipes, nutrition)
 - [x] Add error logging in `prompts/system.py`

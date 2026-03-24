@@ -20,27 +20,6 @@ from gutagent.logging_config import get_logger
 logger = get_logger("prompts")
 
 
-def format_vitals_for_context(vitals_data) -> str:
-    """Format vitals data for the dynamic context."""
-    if isinstance(vitals_data, dict):
-        recent = vitals_data.get("recent_30_days", [])[:10]
-    else:
-        recent = vitals_data[:10] if vitals_data else []
-
-    if not recent:
-        return ""
-
-    lines = []
-    for v in recent:
-        notes_str = f" — {v.get('notes', '')[:70]}" if v.get('notes') else ""
-        if v.get('vital_type') == 'blood_pressure':
-            lines.append(f"- [id:{v['id']}] {str(v['occurred_at'])[:10]}: {v['systolic']}/{v['diastolic']} HR:{v.get('heart_rate') or '?'}{notes_str}")
-        else:
-            lines.append(f"- [id:{v['id']}] {str(v['occurred_at'])[:10]}: {v['vital_type']} {v.get('value')} {v.get('unit', '')}{notes_str}")
-
-    return "## Vitals (7d)\n" + "\n".join(lines)
-
-
 def get_dynamic_context() -> str:
     """Pull recent data from all tables for the system prompt."""
     sections = []
@@ -57,7 +36,7 @@ def get_dynamic_context() -> str:
             ]
             sections.append("## Medications (Current + Recent)\n" + "\n".join(lines))
     except Exception as e:
-        logger.debug("Error building context section: %s", e)
+        logger.debug("Error building Medications section: %s", e)
 
     # Labs - latest value for each test type
     try:
@@ -73,16 +52,15 @@ def get_dynamic_context() -> str:
             ]
             sections.append("## Labs (Latest)\n" + "\n".join(lines))
     except Exception as e:
-        logger.debug("Error building context section: %s", e)
+        logger.debug("Error building Labs section: %s", e)
 
-    # Vitals - last 7d
+    # Vitals - last 7d (get_recent_vitals returns pre-formatted string)
     try:
-        vitals = get_recent_vitals(days_back=7)
-        vitals_section = format_vitals_for_context(vitals)
-        if vitals_section:
-            sections.append(vitals_section)
+        vitals_text = get_recent_vitals(days_back=7)
+        if vitals_text:
+            sections.append(vitals_text)
     except Exception as e:
-        logger.debug("Error building context section: %s", e)
+        logger.debug("Error building Vitals section: %s", e)
 
     # Meals - last 3d
     try:
@@ -95,7 +73,7 @@ def get_dynamic_context() -> str:
             ]
             sections.append("## Meals (3d)\n" + "\n".join(lines))
     except Exception as e:
-        logger.debug("Error building context section: %s", e)
+        logger.debug("Error building Meals section: %s", e)
 
     # Symptoms - last 7d
     try:
@@ -108,7 +86,7 @@ def get_dynamic_context() -> str:
             ]
             sections.append("## Symptoms (7d)\n" + "\n".join(lines))
     except Exception as e:
-        logger.debug("Error building context section: %s", e)
+        logger.debug("Error building Symptoms section: %s", e)
 
     # Sleep - last 3d
     try:
@@ -121,7 +99,7 @@ def get_dynamic_context() -> str:
             ]
             sections.append("## Sleep (3d)\n" + "\n".join(lines))
     except Exception as e:
-        logger.debug("Error building context section: %s", e)
+        logger.debug("Error building Sleep section: %s", e)
 
     # Exercise - last 3d
     try:
@@ -134,7 +112,7 @@ def get_dynamic_context() -> str:
             ]
             sections.append("## Exercise (3d)\n" + "\n".join(lines))
     except Exception as e:
-        logger.debug("Error building context section: %s", e)
+        logger.debug("Error building Exercise section: %s", e)
 
     # Journal - last 3d
     try:
@@ -143,7 +121,7 @@ def get_dynamic_context() -> str:
             lines = [f"- [id:{j['id']}] {str(j['logged_at'])[:10]}: {j['description'][:70]}" for j in journal[:5]]
             sections.append("## Journal (3d)\n" + "\n".join(lines))
     except Exception as e:
-        logger.debug("Error building context section: %s", e)
+        logger.debug("Error building Journal section: %s", e)
 
     # Recipes - with per-serving nutrition
     try:
@@ -179,7 +157,7 @@ def get_dynamic_context() -> str:
                 lines.append(f"- {r['name']} ({servings}srv): {macros} | {micro_str}")
             sections.append("\n".join(lines))
     except Exception as e:
-        logger.debug("Error building context section: %s", e)
+        logger.debug("Error building Recipes section: %s", e)
 
     return "\n\n".join(sections) if sections else "No data logged yet."
 
