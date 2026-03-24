@@ -15,6 +15,7 @@ LOG_TOOLS = {
     "log_sleep": "sleep",
     "log_exercise": "exercise",
     "log_journal": "journal",
+    "save_recipe": "recipes",
 }
 
 # Tools that modify entries
@@ -41,19 +42,34 @@ def format_recent_logs(recent_logs: dict) -> str:
     for table, entries in recent_logs.items():
         for entry in entries:
             entry_id = entry.get("id", "?")
-            # Try various field names to get a description
-            desc = (
-                entry.get("summary") or
-                entry.get("description") or
-                entry.get("symptom") or
-                entry.get("vital_type") or
-                entry.get("type") or
-                entry.get("reading") or
-                entry.get("test_name") or
-                entry.get("medication") or
-                entry.get("event_type") or
-                str(entry)[:50]
-            )
+
+            # Handle recipes specially - show name + ingredient names
+            if table == "recipes":
+                name = entry.get("name", "?")
+                ingredients = entry.get("ingredients", [])
+                if isinstance(ingredients, list):
+                    ing_names = [i.get("name", "") for i in ingredients if isinstance(i, dict)]
+                    ing_str = ", ".join(ing_names[:5])  # First 5 ingredients
+                    if len(ingredients) > 5:
+                        ing_str += "..."
+                    desc = f"{name} ({ing_str})" if ing_str else name
+                else:
+                    desc = name
+            else:
+                # Try various field names to get a description
+                desc = (
+                    entry.get("summary") or
+                    entry.get("description") or
+                    entry.get("name") or
+                    entry.get("symptom") or
+                    entry.get("vital_type") or
+                    entry.get("type") or
+                    entry.get("reading") or
+                    entry.get("test_name") or
+                    entry.get("medication") or
+                    entry.get("event_type") or
+                    str(entry)[:50]
+                )
             lines.append(f"  [{table}] id:{entry_id} — {desc}")
 
     return "\n".join(lines)

@@ -11,21 +11,13 @@ MODELS = {
         "default": "claude-haiku-4-5-20251001",
         "smart": "claude-sonnet-4-5-20250929",
     },
-    "openai": {
-        "default": "gpt-4o-mini",
-        "smart": "gpt-4o",
-    },
-    "ollama": {
-        "default": "llama3.1:8b",
-        "smart": "llama3.1:70b",
-    },
-    "groq": {
-        "default": "llama-3.1-8b-instant",
-        "smart": "llama-3.1-70b-versatile",
-    },
     "gemini": {
         "default": "gemini-2.5-flash",
         "smart": "gemini-2.5-pro",
+    },
+    "openai": {
+        "default": "gpt-4o-mini",
+        "smart": "gpt-4o",
     },
 }
 
@@ -240,7 +232,7 @@ TOOLS = [
                 },
                 "table": {
                     "type": "string",
-                    "enum": ["meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal", "labs"],
+                    "enum": ["meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal", "labs", "recipes"],
                     "description": "Which table to search. Used with date_search. Default is meals."
                 }
             },
@@ -255,7 +247,7 @@ TOOLS = [
             "properties": {
                 "table": {
                     "type": "string",
-                    "enum": ["meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal", "labs"]
+                    "enum": ["meals", "symptoms", "vitals", "medications", "sleep", "exercise", "journal", "labs", "recipes"]
                 },
                 "entry_id": {"type": "integer", "description": "Entry ID"},
                 "action": {

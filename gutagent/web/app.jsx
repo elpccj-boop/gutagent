@@ -23,28 +23,40 @@ function MessageBubble({ message }) {
     const isUser = message.role === 'user';
     const isError = message.role === 'error';
     
+    // Format timestamp
+    const timeStr = message.timestamp
+        ? new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : null;
+
     return (
         <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-3`}>
-            <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${
-                isUser 
-                    ? 'bg-gut-600 text-white rounded-br-md' 
-                    : isError
-                        ? 'bg-red-100 text-red-800 rounded-bl-md'
-                        : 'bg-white text-gray-800 shadow-sm border border-gray-100 rounded-bl-md'
-            }`}>
-                {message.tools && message.tools.length > 0 && (
-                    <div className="tool-call mb-2 pb-2 border-b border-gray-200">
-                        {message.tools.map((tool, i) => (
-                            <div key={i} className="text-gut-700">
-                                🔧 {tool.name}
-                            </div>
-                        ))}
+            <div className="flex flex-col">
+                <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${
+                    isUser 
+                        ? 'bg-gut-600 text-white rounded-br-md' 
+                        : isError
+                            ? 'bg-red-100 text-red-800 rounded-bl-md'
+                            : 'bg-white text-gray-800 shadow-sm border border-gray-100 rounded-bl-md'
+                }`}>
+                    {message.tools && message.tools.length > 0 && (
+                        <div className="tool-call mb-2 pb-2 border-b border-gray-200">
+                            {message.tools.map((tool, i) => (
+                                <div key={i} className="text-gut-700">
+                                    🔧 {tool.name}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    <div
+                        className="markdown-content"
+                        dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
+                    />
+                </div>
+                {timeStr && (
+                    <div className={`text-xs text-gray-400 mt-1 ${isUser ? 'text-right' : 'text-left'}`}>
+                        {timeStr}
                     </div>
                 )}
-                <div 
-                    className="markdown-content"
-                    dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
-                />
             </div>
         </div>
     );
@@ -179,7 +191,8 @@ function App() {
         const saved = localStorage.getItem('gutagent_settings');
         return saved ? JSON.parse(saved) : { model: 'default', showTools: false };
     });
-    
+    const [serverConfig, setServerConfig] = useState(null);
+
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
     
@@ -196,6 +209,14 @@ function App() {
     // Autofocus input on load and after sending
     useEffect(() => {
         inputRef.current?.focus();
+    }, []);
+
+    // Fetch server config on mount
+    useEffect(() => {
+        fetch('/api/config', { credentials: 'include' })
+            .then(res => res.ok ? res.json() : null)
+            .then(data => data && setServerConfig(data))
+            .catch(() => {});
     }, []);
 
     // Check auth on mount — this triggers browser login prompt if needed
@@ -238,7 +259,7 @@ function App() {
         setIsLoading(true);
         
         // Add user message
-        const userMessage = { role: 'user', content: text };
+        const userMessage = { role: 'user', content: text, timestamp: new Date().toISOString() };
         setMessages(prev => [...prev, userMessage]);
         
         try {
@@ -269,7 +290,8 @@ function App() {
             let tools = [];
             
             // Add placeholder for assistant message
-            setMessages(prev => [...prev, { role: 'assistant', content: '', tools: [] }]);
+            const assistantTimestamp = new Date().toISOString();
+            setMessages(prev => [...prev, { role: 'assistant', content: '', tools: [], timestamp: assistantTimestamp }]);
             
             while (true) {
                 const { value, done } = await reader.read();
@@ -288,8 +310,9 @@ function App() {
                             assistantContent += data.content;
                             setMessages(prev => {
                                 const updated = [...prev];
+                                const last = updated[updated.length - 1];
                                 updated[updated.length - 1] = {
-                                    role: 'assistant',
+                                    ...last,
                                     content: assistantContent,
                                     tools: tools,
                                 };
@@ -299,8 +322,9 @@ function App() {
                             tools.push({ name: data.name });
                             setMessages(prev => {
                                 const updated = [...prev];
+                                const last = updated[updated.length - 1];
                                 updated[updated.length - 1] = {
-                                    role: 'assistant',
+                                    ...last,
                                     content: assistantContent,
                                     tools: [...tools],
                                 };
@@ -318,11 +342,13 @@ function App() {
                             // Optionally store in state to display in UI
                             // For now, just logging to console
                         } else if (data.type === 'error') {
-                            throw new Error(data.message);
+                            // Re-throw to outer catch block
+                            throw new Error(data.message || 'Unknown server error');
                         }
                     } catch (e) {
-                        if (e.message !== 'Unexpected end of JSON input') {
-                            console.error('Parse error:', e);
+                        // Re-throw actual errors, only ignore JSON parse errors for incomplete chunks
+                        if (e.message && !e.message.includes('JSON')) {
+                            throw e;
                         }
                     }
                 }
@@ -331,7 +357,8 @@ function App() {
             console.error('Chat error:', error);
             setMessages(prev => [...prev, { 
                 role: 'error', 
-                content: `Error: ${error.message}. Please try again.` 
+                content: error.message,
+                timestamp: new Date().toISOString()
             }]);
         } finally {
             setIsLoading(false);
@@ -358,21 +385,46 @@ function App() {
                     <div>
                         <h1 className="font-semibold text-lg leading-tight">GutAgent</h1>
                         <p className="text-xs text-gut-200">
-                            {settings.model === 'smart' ? 'Smart' : 'Default'}
+                            {serverConfig ? (
+                                settings.model === 'smart'
+                                    ? serverConfig.smart_model
+                                    : serverConfig.default_model
+                            ) : (
+                                'Loading...'
+                            )}
                         </p>
                     </div>
                 </div>
-                <button 
-                    onClick={() => setSettingsOpen(true)}
-                    className="p-2 hover:bg-gut-600 rounded-full transition"
-                >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
-                              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
-                              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                </button>
+                <div className="flex items-center gap-1">
+                    {messages.length > 0 && (
+                        <button
+                            onClick={() => {
+                                if (confirm('Clear chat history?')) {
+                                    setMessages([]);
+                                    localStorage.removeItem('gutagent_messages');
+                                }
+                            }}
+                            className="p-2 hover:bg-gut-600 rounded-full transition"
+                            title="Clear chat"
+                        >
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                        </button>
+                    )}
+                    <button
+                        onClick={() => setSettingsOpen(true)}
+                        className="p-2 hover:bg-gut-600 rounded-full transition"
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                    </button>
+                </div>
             </header>
             
             {/* Messages */}

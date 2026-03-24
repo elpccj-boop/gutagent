@@ -1447,6 +1447,30 @@ class TestAgent:
         assert format_recent_logs({}) == ""
         assert format_recent_logs(None) == ""
 
+    def test_format_recent_logs_recipe(self):
+        """Test recipe formatting shows name and ingredients."""
+        from gutagent.core import format_recent_logs
+
+        recent_logs = {
+            "recipes": [{
+                "id": 5,
+                "name": "Masala Tea",
+                "ingredients": [
+                    {"name": "tea", "quantity": 2, "unit": "tsp"},
+                    {"name": "milk", "quantity": 1, "unit": "cup"},
+                    {"name": "sugar", "quantity": 1, "unit": "tbsp"},
+                ]
+            }]
+        }
+
+        result = format_recent_logs(recent_logs)
+
+        assert "recipes" in result
+        assert "id:5" in result
+        assert "Masala Tea" in result
+        assert "tea" in result
+        assert "milk" in result
+
 
 # =============================================================================
 # API ENDPOINT TESTS

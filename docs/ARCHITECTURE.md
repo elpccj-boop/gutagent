@@ -87,7 +87,7 @@ data/                       # User data (gitignored, create manually)
 └── profile.json            # Copy from gutagent/profile_template.json
 
 tests/
-└── test_gutagent.py        # 86 tests
+└── test_gutagent.py
 ```
 
 ## Tech Stack
@@ -95,7 +95,7 @@ tests/
 | Component | Choice | Notes |
 |-----------|--------|-------|
 | Language | Python 3.13 | |
-| LLM | Claude (default), Gemini, OpenAI | Provider abstraction in `llm/` |
+| LLM | Claude, Gemini, OpenAI | Provider abstraction in `llm/` |
 | Database | SQLite (WAL mode) | Zero setup, file-based |
 | CLI | rich + prompt_toolkit | Pretty terminal UI |
 | Web Backend | FastAPI + SSE | Streaming responses |
@@ -104,11 +104,15 @@ tests/
 
 ### LLM Providers
 
-| Provider | Status | Model (default/smart) |
-|----------|--------|----------------------|
-| Claude | ✅ Recommended | Haiku / Sonnet |
-| Gemini | ✅ Works | Flash / Pro |
-| OpenAI | ✅ Works | GPT-4o-mini / GPT-4o |
+| Provider | Default | Smart | Cost (per 1M tokens) | Notes |
+|----------|---------|-------|----------------------|-------|
+| Claude | Haiku 4.5 | Sonnet 4.5 | $1/$5 — $3/$15 | Best tool calling, native streaming |
+| Gemini | 2.5 Flash | 2.5 Pro | $0.30/$2.50 — $1.25/$10 | Free tier available, good quality |
+| OpenAI | GPT-4o-mini | GPT-4o | $0.15/$0.60 — $2.50/$10 | Widely used, cheapest default tier |
+
+*Cost format: input/output per million tokens*
+
+For typical usage (~10K input, ~1K output per interaction): Gemini Flash ≈ $0.005, Claude Haiku ≈ $0.015, GPT-4o-mini ≈ $0.002.
 
 Configure in `.env` (see Configuration section below).
 
@@ -295,7 +299,7 @@ Paths can be overridden via environment variables:
 ## Testing
 
 ```bash
-# Run all tests (86 tests)
+# Run all tests
 pytest tests/test_gutagent.py -v
 
 # Run specific test class
@@ -309,7 +313,7 @@ Tests use a temporary database and profile — your real data is never touched.
 
 ## Known Limitations
 
-1. **Web streaming is Claude-only** — The provider abstraction isn't yet used for web streaming
+1. **Web streaming is Claude-only** — Gemini/OpenAI use non-streaming fallback in web UI
 2. **No offline queue** — Web UI requires connectivity
 3. **Session state in memory** — Web sessions lost on server restart
 4. **Single user** — No multi-user support (personal tool)

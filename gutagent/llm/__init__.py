@@ -12,7 +12,7 @@ def get_provider(
     Factory function to get an LLM provider.
     
     Args:
-        provider: "claude", "openai", "ollama", "groq", or "gemini"
+        provider: "claude", "gemini", or "openai"
         model: Model name (optional, uses defaults)
         api_key: API key (optional, uses env vars)
     
@@ -20,25 +20,26 @@ def get_provider(
         LLM provider instance
     
     Examples:
-        # Claude (default)
+        # Claude
         provider = get_provider("claude", model="claude-haiku-4-5-20251001")
-        
+
+        # Gemini
+        provider = get_provider("gemini", model="gemini-2.5-flash")
+
         # OpenAI
         provider = get_provider("openai", model="gpt-4o-mini")
-        
-        # Ollama (local)
-        provider = get_provider("ollama", model="llama3.1:8b")
-
-        # Groq (free tier available)
-        provider = get_provider("groq", model="llama-3.1-70b-versatile")
-
-        # Gemini (free tier available)
-        provider = get_provider("gemini", model="gemini-1.5-flash")
     """
     if provider == "claude":
         from .claude import ClaudeProvider
         return ClaudeProvider(
             model=model or "claude-haiku-4-5-20251001",
+            api_key=api_key,
+        )
+
+    elif provider == "gemini":
+        from gutagent.llm.gemini_provider import GeminiProvider
+        return GeminiProvider(
+            model=model or "gemini-2.5-flash",
             api_key=api_key,
         )
     
@@ -48,29 +49,9 @@ def get_provider(
             model=model or "gpt-4o-mini",
             api_key=api_key,
         )
-    
-    elif provider == "ollama":
-        from .ollama_provider import OllamaProvider
-        return OllamaProvider(
-            model=model or "llama3.1:8b",
-        )
-    
-    elif provider == "groq":
-        from gutagent.llm.groq_provider import GroqProvider
-        return GroqProvider(
-            model=model or "llama-3.1-70b-versatile",
-            api_key=api_key,
-        )
-
-    elif provider == "gemini":
-        from gutagent.llm.gemini_provider import GeminiProvider
-        return GeminiProvider(
-            model=model or "gemini-1.5-flash",
-            api_key=api_key,
-        )
 
     else:
-        raise ValueError(f"Unknown provider: {provider}. Use 'claude', 'openai', 'ollama', 'groq', or 'gemini'.")
+        raise ValueError(f"Unknown provider: {provider}. Use 'claude', 'gemini' or 'openai'.")
 
 
 __all__ = ["get_provider", "BaseLLMProvider", "LLMResponse"]

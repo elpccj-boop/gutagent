@@ -26,6 +26,10 @@ def main():
         print("\n❌ ANTHROPIC_API_KEY not set!")
         print("   Run: export ANTHROPIC_API_KEY='your-key-here'\n")
         sys.exit(1)
+    elif provider == 'gemini' and not os.getenv('GOOGLE_API_KEY'):
+        print("\n❌ GOOGLE_API_KEY not set!")
+        print("   Run: export GOOGLE_API_KEY='your-key-here'\n")
+        sys.exit(1)
     elif provider == 'openai' and not os.getenv('OPENAI_API_KEY'):
         print("\n❌ OPENAI_API_KEY not set!")
         print("   Run: export OPENAI_API_KEY='your-key-here'\n")

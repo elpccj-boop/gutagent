@@ -1,6 +1,6 @@
 # GutAgent 🧬
 
-A personalized dietary AI agent for tracking food, symptoms, vitals, and health patterns. Built with Claude's API and function calling.
+A personalized dietary AI agent for tracking food, symptoms, vitals, and health patterns. Supports Claude, Gemini, and OpenAI.
 
 ## What It Does
 
@@ -52,11 +52,13 @@ GUTAGENT_PASSWORD=yourpassword
 
 ### LLM Providers
 
-| Provider | Status | Notes |
-|----------|--------|-------|
-| Claude | ✅ Recommended | Best tool calling, streaming in web UI |
-| Gemini | ✅ Works | Free tier available |
-| OpenAI | ✅ Works | Good quality |
+| Provider | Default | Smart | Cost (per 1M tokens) | Notes |
+|----------|---------|-------|----------------------|-------|
+| Claude | Haiku 4.5 | Sonnet 4.5 | $1/$5 — $3/$15 | Best tool calling, native streaming |
+| Gemini | 2.5 Flash | 2.5 Pro | $0.30/$2.50 — $1.25/$10 | Free tier available, good quality |
+| OpenAI | GPT-4o-mini | GPT-4o | $0.15/$0.60 — $2.50/$10 | Widely used, cheapest default tier |
+
+*Cost format: input/output per million tokens*
 
 ## Usage
 
@@ -168,7 +170,7 @@ Alerts appear when 3-day averages fall below 70% of RDA or exceed safe limits.
 ## Testing
 
 ```bash
-pytest tests/test_gutagent.py -v   # 86 tests
+pytest tests/test_gutagent.py -v
 ```
 
 Tests use a temporary database and profile — your data is never touched.
@@ -181,6 +183,6 @@ Tests use a temporary database and profile — your data is never touched.
 
 ## Known Limitations
 
-- Web streaming is Claude-only (provider abstraction not yet implemented for streaming)
+- Web streaming is Claude-only (Gemini/OpenAI use non-streaming fallback)
 - Single user (personal tool, no multi-user support)
 - Session state in memory (lost on server restart)

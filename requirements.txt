@@ -10,11 +10,9 @@ fastapi>=0.115.0
 uvicorn>=0.32.0
 
 # LLM Providers (install the one you need)
-anthropic>=0.40.0      # Claude (default)
-google-genai>=1.0.0    # Gemini (recommended free option)
-# openai>=1.0.0        # OpenAI (uncomment if needed)
-# groq>=0.4.0          # Groq (uncomment if needed)
-# ollama>=0.1.0        # Ollama local (uncomment if needed)
+anthropic>=0.40.0      # Claude
+google-genai>=1.0.0    # Gemini
+# openai>=1.0.0        # OpenAI
 
 # Testing
 pytest>=8.0.0
