@@ -1,7 +1,6 @@
 """LLM provider abstraction layer."""
 
 from .base import BaseLLMProvider, LLMResponse
-from .claude import ClaudeProvider
 
 
 def get_provider(
@@ -74,4 +73,4 @@ def get_provider(
         raise ValueError(f"Unknown provider: {provider}. Use 'claude', 'openai', 'ollama', 'groq', or 'gemini'.")
 
 
-__all__ = ["get_provider", "BaseLLMProvider", "LLMResponse", "ClaudeProvider"]
+__all__ = ["get_provider", "BaseLLMProvider", "LLMResponse"]

@@ -3,7 +3,6 @@
 ## Now (Technical Debt)
 
 - [ ] Investigate static prompt size (cache_create=6383 tokens, was ~6215)
-- [ ] Add integration tests for `agent.py`
 - [ ] Add API endpoint tests
 
 ## Next (Features)
@@ -20,12 +19,12 @@
 ## Backlog (Unverified)
 
 - [ ] Add recipes to recent logs so they can be corrected
-- [ ] Verify labs are logged without test date errors
-- [ ] Same symptom should not be logged repeatedly while chatting
 - [ ] Confirm query_log defaults for #days to go back
 
-
 ## Done
+- [x] Same symptom should not be logged repeatedly while chatting
+- [x] Verify labs are logged without test date errors
+- [x] Add integration tests for `agent.py`
 - [x] Add token usage reporting for Gemini provider
 - [x] Add timestamp to CLI display (helps debug cache expiry)
 - [x] Fix vitals context bug ('str' object has no attribute 'get')

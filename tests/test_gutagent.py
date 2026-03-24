@@ -1192,6 +1192,345 @@ class TestRDA:
 
 
 # =============================================================================
+# AGENT INTEGRATION TESTS
+# =============================================================================
+
+from unittest.mock import MagicMock, patch
+
+
+class TestAgent:
+    """Integration tests for the agent loop."""
+
+    def test_agent_simple_text_response(self):
+        """Agent returns text when LLM gives end_turn."""
+        from gutagent.agent import run_agent
+        from gutagent.llm.base import LLMResponse
+
+        # Mock LLM that returns a simple text response
+        mock_response = LLMResponse(
+            content=[{"type": "text", "text": "Hello! How can I help you today?"}],
+            stop_reason="end_turn",
+            usage={"input_tokens": 100, "output_tokens": 20}
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = mock_response
+
+        with patch('gutagent.agent.get_provider', return_value=mock_provider):
+            profile = {"personal": {"sex": "female", "dob": "1990-01-01"}}
+            response_text, recent_logs, last_exchange = run_agent(
+                "Hello",
+                profile=profile,
+            )
+
+        assert response_text == "Hello! How can I help you today?"
+        assert recent_logs == {}
+        assert last_exchange["user"] == "Hello"
+        assert "Hello!" in last_exchange["assistant"]
+
+    def test_agent_tool_call_and_response(self):
+        """Agent executes tool and returns final response."""
+        from gutagent.agent import run_agent
+        from gutagent.llm.base import LLMResponse
+
+        # First response: LLM wants to call a tool
+        tool_call_response = LLMResponse(
+            content=[{
+                "type": "tool_use",
+                "id": "tool_1",
+                "name": "log_symptom",
+                "input": {"symptom": "headache", "severity": 5}
+            }],
+            stop_reason="tool_use",
+            usage={"input_tokens": 100, "output_tokens": 50}
+        )
+
+        # Second response: LLM gives final text
+        final_response = LLMResponse(
+            content=[{"type": "text", "text": "I've logged your headache (severity 5)."}],
+            stop_reason="end_turn",
+            usage={"input_tokens": 150, "output_tokens": 30}
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.chat.side_effect = [tool_call_response, final_response]
+
+        with patch('gutagent.agent.get_provider', return_value=mock_provider):
+            profile = {"personal": {"sex": "female", "dob": "1990-01-01"}}
+            response_text, recent_logs, last_exchange = run_agent(
+                "I have a headache, about a 5",
+                profile=profile,
+            )
+
+        assert "logged" in response_text.lower() or "headache" in response_text.lower()
+        assert "symptoms" in recent_logs
+        assert len(recent_logs["symptoms"]) == 1
+        assert recent_logs["symptoms"][0]["symptom"] == "headache"
+
+    def test_agent_tracks_meal_in_recent_logs(self):
+        """Agent tracks logged meals in recent_logs for corrections."""
+        from gutagent.agent import run_agent
+        from gutagent.llm.base import LLMResponse
+
+        # First response: log meal
+        tool_call_response = LLMResponse(
+            content=[{
+                "type": "tool_use",
+                "id": "tool_1",
+                "name": "log_meal",
+                "input": {
+                    "meal_type": "breakfast",
+                    "description": "eggs and toast",
+                    "items": [
+                        {"name": "eggs", "quantity": 2, "calories": 140, "protein": 12},
+                        {"name": "toast", "quantity": 1, "calories": 80, "carbs": 15}
+                    ]
+                }
+            }],
+            stop_reason="tool_use",
+            usage={"input_tokens": 100, "output_tokens": 80}
+        )
+
+        final_response = LLMResponse(
+            content=[{"type": "text", "text": "Logged your breakfast!"}],
+            stop_reason="end_turn",
+            usage={"input_tokens": 200, "output_tokens": 20}
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.chat.side_effect = [tool_call_response, final_response]
+
+        with patch('gutagent.agent.get_provider', return_value=mock_provider):
+            profile = {"personal": {"sex": "female", "dob": "1990-01-01"}}
+            response_text, recent_logs, last_exchange = run_agent(
+                "Had eggs and toast for breakfast",
+                profile=profile,
+            )
+
+        assert "meals" in recent_logs
+        assert len(recent_logs["meals"]) == 1
+        assert recent_logs["meals"][0]["meal_type"] == "breakfast"
+
+    def test_agent_preserves_last_exchange(self):
+        """Agent includes last_exchange in messages for context."""
+        from gutagent.agent import run_agent
+        from gutagent.llm.base import LLMResponse
+
+        mock_response = LLMResponse(
+            content=[{"type": "text", "text": "Yes, I can help with that."}],
+            stop_reason="end_turn",
+            usage={"input_tokens": 100, "output_tokens": 20}
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = mock_response
+
+        with patch('gutagent.agent.get_provider', return_value=mock_provider):
+            profile = {"personal": {"sex": "female", "dob": "1990-01-01"}}
+            last_exchange = {
+                "user": "Can you help me track meals?",
+                "assistant": "Of course! What did you eat?"
+            }
+
+            response_text, recent_logs, new_exchange = run_agent(
+                "yes",
+                profile=profile,
+                last_exchange=last_exchange,
+            )
+
+        # Check that chat was called with messages including last_exchange
+        call_args = mock_provider.chat.call_args
+        messages = call_args.kwargs.get('messages') or call_args[0][0]
+
+        assert len(messages) == 3  # last_user, last_assistant, current_user
+        assert messages[0]["content"] == "Can you help me track meals?"
+        assert messages[1]["content"] == "Of course! What did you eat?"
+        assert messages[2]["content"] == "yes"
+
+    def test_agent_max_iterations_safety(self):
+        """Agent stops after max iterations to prevent infinite loops."""
+        from gutagent.agent import run_agent
+        from gutagent.llm.base import LLMResponse
+
+        # LLM keeps requesting tools forever
+        endless_tool_response = LLMResponse(
+            content=[{
+                "type": "tool_use",
+                "id": "tool_1",
+                "name": "get_profile",
+                "input": {}
+            }],
+            stop_reason="tool_use",
+            usage={"input_tokens": 100, "output_tokens": 20}
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = endless_tool_response
+
+        with patch('gutagent.agent.get_provider', return_value=mock_provider):
+            profile = {"personal": {"sex": "female", "dob": "1990-01-01"}}
+            response_text, recent_logs, last_exchange = run_agent(
+                "Test infinite loop protection",
+                profile=profile,
+            )
+
+        assert "maximum iterations" in response_text.lower()
+        # Should have been called 10 times (max_iterations)
+        assert mock_provider.chat.call_count == 10
+
+    def test_agent_multiple_tool_calls(self):
+        """Agent handles multiple tool calls in one response."""
+        from gutagent.agent import run_agent
+        from gutagent.llm.base import LLMResponse
+
+        # LLM wants to call two tools at once
+        multi_tool_response = LLMResponse(
+            content=[
+                {
+                    "type": "tool_use",
+                    "id": "tool_1",
+                    "name": "log_symptom",
+                    "input": {"symptom": "fatigue", "severity": 6}
+                },
+                {
+                    "type": "tool_use",
+                    "id": "tool_2",
+                    "name": "log_symptom",
+                    "input": {"symptom": "headache", "severity": 4}
+                }
+            ],
+            stop_reason="tool_use",
+            usage={"input_tokens": 100, "output_tokens": 80}
+        )
+
+        final_response = LLMResponse(
+            content=[{"type": "text", "text": "Logged both symptoms."}],
+            stop_reason="end_turn",
+            usage={"input_tokens": 200, "output_tokens": 20}
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.chat.side_effect = [multi_tool_response, final_response]
+
+        with patch('gutagent.agent.get_provider', return_value=mock_provider):
+            profile = {"personal": {"sex": "female", "dob": "1990-01-01"}}
+            response_text, recent_logs, last_exchange = run_agent(
+                "Feeling fatigued (6) and have a headache (4)",
+                profile=profile,
+            )
+
+        assert "symptoms" in recent_logs
+        assert len(recent_logs["symptoms"]) == 2
+
+    def test_format_recent_logs(self):
+        """Test recent_logs formatting for prompt."""
+        from gutagent.core import format_recent_logs
+
+        recent_logs = {
+            "meals": [{"id": 1, "summary": "eggs and toast"}],
+            "symptoms": [{"id": 2, "symptom": "headache", "severity": 5}]
+        }
+
+        result = format_recent_logs(recent_logs)
+
+        assert "Recently logged" in result
+        assert "meals" in result
+        assert "id:1" in result
+        assert "eggs and toast" in result
+        assert "symptoms" in result
+        assert "headache" in result
+
+    def test_format_recent_logs_empty(self):
+        """Test empty recent_logs returns empty string."""
+        from gutagent.core import format_recent_logs
+
+        assert format_recent_logs({}) == ""
+        assert format_recent_logs(None) == ""
+
+
+# =============================================================================
+# API ENDPOINT TESTS
+# =============================================================================
+
+# TODO: API tests need proper test environment setup
+# Currently server.py loads DB/profile at module import time,
+# so these tests would use real data instead of test fixtures.
+# Need to refactor server.py to accept injected dependencies,
+# or create a separate test server configuration.
+
+# Skip API tests if FastAPI not installed
+try:
+    from fastapi.testclient import TestClient
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+
+
+@pytest.mark.skip(reason="API tests need test environment setup - uses real DB/profile")
+@pytest.mark.skipif(not HAS_FASTAPI, reason="FastAPI not installed")
+class TestAPI:
+    """Tests for FastAPI endpoints."""
+
+    @pytest.fixture
+    def client(self):
+        """Create test client for API with auth."""
+        import os
+        import base64
+        from fastapi.testclient import TestClient
+        from gutagent.api.server import app
+
+        # Get auth credentials from env (same as server uses)
+        username = os.getenv("GUTAGENT_USERNAME", "")
+        password = os.getenv("GUTAGENT_PASSWORD", "")
+
+        client = TestClient(app)
+
+        # Add auth header if credentials are set
+        if username and password:
+            credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
+            client.headers["Authorization"] = f"Basic {credentials}"
+
+        return client
+
+    def test_profile_endpoint(self, client):
+        """Test /api/profile returns profile data."""
+        response = client.get("/api/profile")
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, dict)
+
+    def test_context_endpoint(self, client):
+        """Test /api/context returns context data."""
+        response = client.get("/api/context")
+        assert response.status_code == 200
+        data = response.json()
+        assert "dynamic_context" in data
+
+    def test_chat_endpoint_requires_message(self, client):
+        """Test /api/chat requires a message field."""
+        response = client.post("/api/chat", json={})
+        # Should fail validation (missing required field)
+        assert response.status_code == 422
+
+    def test_chat_endpoint_accepts_message(self, client):
+        """Test /api/chat accepts valid message (returns SSE stream)."""
+        response = client.post(
+            "/api/chat",
+            json={"message": "hello", "model": "claude-haiku-4-5-20251001"}
+        )
+        # Should return 200 with streaming response
+        # Note: actual streaming requires anthropic client, may fail without API key
+        # but the endpoint should at least accept the request format
+        assert response.status_code in [200, 500]  # 500 if no API key
+
+    def test_static_files_index(self, client):
+        """Test that index.html is served at root."""
+        response = client.get("/")
+        assert response.status_code == 200
+        assert "text/html" in response.headers.get("content-type", "")
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 

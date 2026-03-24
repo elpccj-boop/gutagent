@@ -120,21 +120,27 @@ class GeminiProvider(BaseLLMProvider):
         has_tool_calls = False
         
         if response.candidates and response.candidates[0].content:
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, 'text') and part.text:
-                    content.append({"type": "text", "text": part.text})
-                elif hasattr(part, 'function_call') and part.function_call:
-                    has_tool_calls = True
-                    fc = part.function_call
-                    # Convert args to dict
-                    args = dict(fc.args) if fc.args else {}
-                    content.append({
-                        "type": "tool_use",
-                        "id": f"tool_{fc.name}",
-                        "name": fc.name,
-                        "input": args,
-                    })
+            parts = response.candidates[0].content.parts
+            if parts:  # parts can be None
+                for part in parts:
+                    if hasattr(part, 'text') and part.text:
+                        content.append({"type": "text", "text": part.text})
+                    elif hasattr(part, 'function_call') and part.function_call:
+                        has_tool_calls = True
+                        fc = part.function_call
+                        # Convert args to dict
+                        args = dict(fc.args) if fc.args else {}
+                        content.append({
+                            "type": "tool_use",
+                            "id": f"tool_{fc.name}",
+                            "name": fc.name,
+                            "input": args,
+                        })
         
+        # If no content, provide a fallback message
+        if not content:
+            content.append({"type": "text", "text": "[No response from model]"})
+
         stop_reason = "tool_use" if has_tool_calls else "end_turn"
 
         # Extract token usage if available
@@ -142,8 +148,8 @@ class GeminiProvider(BaseLLMProvider):
         if hasattr(response, 'usage_metadata') and response.usage_metadata:
             um = response.usage_metadata
             usage = {
-                "input_tokens": getattr(um, 'prompt_token_count', 0),
-                "output_tokens": getattr(um, 'candidates_token_count', 0),
+                "input_tokens": getattr(um, 'prompt_token_count', 0) or 0,
+                "output_tokens": getattr(um, 'candidates_token_count', 0) or 0,
             }
 
         return LLMResponse(content=content, stop_reason=stop_reason, usage=usage)
