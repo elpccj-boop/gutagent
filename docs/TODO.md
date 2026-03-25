@@ -16,11 +16,13 @@
 
 ## Backlog
 
-- [ ] Confirm query_log defaults for #days to go back
-- [ ] Add API endpoint tests
+- [ ] Fix API endpoint tests
 - [ ] Add util for transferring / syncing data across DBs.
 
 ## Done
+- [x] Refactor db functions for consistency (get_recent_*, get_*_summary, search_*)
+- [x] Add search_labs_by_test for lab history queries
+- [x] Document query_log defaults and data windows in ARCHITECTURE.md
 - [x] Add tests for `system.py` and `llm`
 - [x] Normalize token usage reporting across all providers (Claude semantics)
 - [x] Add context caching for Gemini/OpenAI provider (usage reporting)

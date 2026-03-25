@@ -36,15 +36,17 @@ from .logs import (
     search_symptoms,
     # Medications
     log_medication_event,
-    get_recent_meds,
     get_current_and_recent_meds,
+    get_meds_summary,
     # Vitals
     log_vital,
     get_recent_vitals,
+    get_vitals_summary,
     # Labs
     log_lab,
-    get_recent_labs,
+    get_labs_by_date,
     get_latest_labs_per_test,
+    search_labs_by_test,
     # Sleep
     log_sleep,
     get_recent_sleep,

@@ -16,9 +16,10 @@ from gutagent.db import (
     search_symptoms,
     get_recent_meals,
     get_recent_symptoms,
-    get_recent_vitals,
-    get_recent_labs,
-    get_recent_meds,
+    get_vitals_summary,
+    get_labs_by_date,
+    search_labs_by_test,
+    get_meds_summary,
     get_recent_sleep,
     get_recent_exercise,
     get_recent_journal,
@@ -283,7 +284,6 @@ def _handle_query_logs(input: dict) -> str:
     simple_queries = {
         "recent_meals": (get_recent_meals, "meals"),
         "recent_symptoms": (get_recent_symptoms, "symptoms"),
-        "recent_meds": (get_recent_meds, "medications"),
         "recent_sleep": (get_recent_sleep, "sleep"),
         "recent_exercise": (get_recent_exercise, "exercise"),
         "recent_journal": (get_recent_journal, "journal"),
@@ -300,21 +300,42 @@ def _handle_query_logs(input: dict) -> str:
         lines = [_format_log_entry(e, table) for e in entries]
         return f"{len(entries)} {table} (last {days_back}d):\n" + "\n".join(lines)
 
+    # Handle meds (default to all history, returns summary like vitals)
+    elif query_type == "recent_meds":
+        days = input.get("days_back", 0)
+        return get_meds_summary(days)
+
     # Handle vitals (special case - returns pre-formatted string from model)
     elif query_type == "recent_vitals":
         vital_type = input.get("search_term")
         days = input.get("days_back", 0)
-        # get_recent_vitals already returns formatted string
-        return get_recent_vitals(days, vital_type)
+        # get_vitals_summary returns formatted string
+        return get_vitals_summary(days, vital_type)
 
-    # Handle labs (special case - takes test name)
+    # Handle labs - search_term can be a date (YYYY-MM-DD) or test name
     elif query_type == "recent_labs":
-        labs = get_recent_labs(search_term)
-        if not labs:
-            return f"No lab results found{f' for {search_term}' if search_term else ''}"
-
-        lines = [_format_log_entry(lab, "labs") for lab in labs]
-        return f"{len(labs)} lab results:\n" + "\n".join(lines)
+        import re
+        if search_term and re.match(r'^\d{4}-\d{2}-\d{2}$', search_term):
+            # It's a date
+            labs = get_labs_by_date(search_term)
+            if not labs:
+                return f"No lab results found for date {search_term}"
+            lines = [_format_log_entry(lab, "labs") for lab in labs]
+            return f"{len(labs)} lab results from {search_term}:\n" + "\n".join(lines)
+        elif search_term:
+            # It's a test name
+            labs = search_labs_by_test(search_term)
+            if not labs:
+                return f"No lab results found for test '{search_term}'"
+            lines = [_format_log_entry(lab, "labs") for lab in labs]
+            return f"{len(labs)} results for '{search_term}':\n" + "\n".join(lines)
+        else:
+            # No search term - get most recent date
+            labs = get_labs_by_date()
+            if not labs:
+                return "No lab results found"
+            lines = [_format_log_entry(lab, "labs") for lab in labs]
+            return f"{len(labs)} lab results (most recent):\n" + "\n".join(lines)
 
     # Handle search queries
     elif query_type == "food_search":

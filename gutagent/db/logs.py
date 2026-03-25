@@ -157,25 +157,13 @@ def log_medication_event(medication: str, event_type: str,
     return {"id": event_id, "status": "logged", "medication": medication, "event": event_type, "when": timestamp}
 
 
-def get_recent_meds(days_back: int = 365) -> list:
-    """Get medication events from last N days."""
-    conn = get_connection()
-    cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-    rows = conn.execute(
-        "SELECT * FROM medications WHERE occurred_at >= ? ORDER BY occurred_at",
-        (cutoff,)
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
-def get_current_and_recent_meds(recent_days: int = 30) -> list:
+def get_current_and_recent_meds(days_back: int = 30) -> list:
     """
     Get current medications + recent changes.
     Returns: recent events (last N days) + the latest 'started' event for each medication.
     """
     conn = get_connection()
-    cutoff = (datetime.now() - timedelta(days=recent_days)).strftime("%Y-%m-%d")
+    cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
     rows = conn.execute("""
         SELECT me.*
         FROM medications me
@@ -188,6 +176,84 @@ def get_current_and_recent_meds(recent_days: int = 30) -> list:
     """, (cutoff,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_meds_summary(days_back: int = 0) -> str:
+    """
+    Get medication history as a compact text summary.
+    Returns pre-formatted summary for Claude to analyze.
+    """
+    conn = get_connection()
+    lines = []
+    # Current medications (started but not stopped)
+    current = conn.execute("""
+        SELECT m1.medication, m1.dose, m1.occurred_at as started_at, m1.notes
+        FROM medications m1
+        WHERE m1.event_type = 'started'
+          AND NOT EXISTS (
+              SELECT 1 FROM medications m2 
+              WHERE m2.medication = m1.medication 
+                AND m2.event_type = 'stopped'
+                AND m2.occurred_at > m1.occurred_at
+          )
+        ORDER BY m1.occurred_at DESC
+    """).fetchall()
+
+    if current:
+        lines.append("=== CURRENT MEDICATIONS ===")
+        for med in current:
+            dose = f" ({med['dose']})" if med['dose'] else ""
+            started = med['started_at'][:10]
+            lines.append(f"  {med['medication']}{dose} — since {started}")
+
+    # Recent changes
+    if days_back > 0:
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        changes = conn.execute("""
+            SELECT * FROM medications 
+            WHERE occurred_at >= ? 
+            ORDER BY occurred_at DESC
+        """, (cutoff,)).fetchall()
+    else:
+        changes = conn.execute("""
+            SELECT * FROM medications ORDER BY occurred_at DESC
+        """).fetchall()
+
+    # Group by event type
+    started = [m for m in changes if m['event_type'] == 'started']
+    stopped = [m for m in changes if m['event_type'] == 'stopped']
+    dose_changed = [m for m in changes if m['event_type'] == 'dose_changed']
+
+    period = f"last {days_back}d" if days_back > 0 else "all time"
+
+    if started or stopped or dose_changed:
+        lines.append(f"\n=== MEDICATION HISTORY ({period}) ===")
+
+        if started:
+            lines.append(f"Started ({len(started)}):")
+            for m in started[:10]:  # Limit to 10
+                dose = f" ({m['dose']})" if m['dose'] else ""
+                lines.append(f"  {m['occurred_at'][:10]}: {m['medication']}{dose}")
+
+        if stopped:
+            lines.append(f"Stopped ({len(stopped)}):")
+            for m in stopped[:10]:
+                lines.append(f"  {m['occurred_at'][:10]}: {m['medication']}")
+
+        if dose_changed:
+            lines.append(f"Dose changes ({len(dose_changed)}):")
+            for m in dose_changed[:10]:
+                dose = f" → {m['dose']}" if m['dose'] else ""
+                lines.append(f"  {m['occurred_at'][:10]}: {m['medication']}{dose}")
+
+        lines.append(f"\nTotal events: {len(changes)}")
+
+    conn.close()
+
+    if not lines:
+        return "No medication history found."
+
+    return "\n".join(lines)
 
 
 # =============================================================================
@@ -219,7 +285,27 @@ def log_vital(vital_type: str, occurred_at: str | None = None,
     return result
 
 
-def get_recent_vitals(days_back: int = 0, vital_type: str | None = None) -> str:
+def get_recent_vitals(days_back: int = 7, vital_type: str | None = None) -> list:
+    """Get vital signs from last N days as a list of dicts."""
+    conn = get_connection()
+    cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+
+    if vital_type:
+        rows = conn.execute(
+            "SELECT * FROM vitals WHERE vital_type = ? AND occurred_at >= ? ORDER BY occurred_at DESC",
+            (vital_type, cutoff)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM vitals WHERE occurred_at >= ? ORDER BY occurred_at DESC",
+            (cutoff,)
+        ).fetchall()
+
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_vitals_summary(days_back: int = 0, vital_type: str | None = None) -> str:
     """
     Get vital signs as a compact text summary.
     Returns pre-formatted summary for Claude to analyze.
@@ -373,7 +459,7 @@ def log_lab(test_name: str, test_date: str | None = None, value: float | None = 
             "test_date": test_date_str, "summary": " ".join(summary_parts)}
 
 
-def get_recent_labs(test_date: str | None = None) -> list:
+def get_labs_by_date(test_date: str | None = None) -> list:
     """Get labs from a specific date or most recent date."""
     conn = get_connection()
     if test_date:
@@ -401,6 +487,17 @@ def get_latest_labs_per_test() -> list:
         WHERE rn = 1
         ORDER BY test_date DESC, test_name
     """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def search_labs_by_test(test_name: str) -> list:
+    """Get all results for a specific test (e.g., CRP history)."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM labs WHERE LOWER(test_name) LIKE LOWER(?) ORDER BY test_date DESC",
+        (f"%{test_name}%",)
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 

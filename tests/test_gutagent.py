@@ -42,13 +42,15 @@ from gutagent.db import (
     # Vitals
     log_vital,
     get_recent_vitals,
+    get_vitals_summary,
     # Labs
     log_lab,
-    get_recent_labs,
+    get_labs_by_date,
     get_latest_labs_per_test,
+    search_labs_by_test,
     # Medications
     log_medication_event,
-    get_recent_meds,
+    get_current_and_recent_meds,
     # Sleep
     log_sleep,
     get_recent_sleep,
@@ -289,12 +291,21 @@ class TestVitals:
         assert result["status"] == "logged"
 
     def test_get_recent_vitals(self):
-        """Retrieve recent vitals."""
+        """Retrieve recent vitals as list."""
         log_vital(vital_type="blood_pressure", systolic=118, diastolic=78, heart_rate=70)
         log_vital(vital_type="blood_pressure", systolic=122, diastolic=82, heart_rate=75)
 
         result = get_recent_vitals(days_back=1, vital_type="blood_pressure")
-        assert isinstance(result, (str, dict))
+        assert isinstance(result, list)
+        assert len(result) == 2
+
+    def test_get_vitals_summary(self):
+        """Retrieve vitals as formatted summary."""
+        log_vital(vital_type="blood_pressure", systolic=118, diastolic=78, heart_rate=70)
+
+        result = get_vitals_summary(days_back=1, vital_type="blood_pressure")
+        assert isinstance(result, str)
+        assert "118" in result
 
 
 # =============================================================================
@@ -334,22 +345,23 @@ class TestLabs:
         today = datetime.now().strftime("%Y-%m-%d")
         assert result["test_date"] == today
 
-    def test_get_recent_labs(self):
+    def test_get_labs_by_date(self):
         """Get labs from most recent date."""
         log_lab(test_name="CRP", test_date="2026-03-10", value=0.5)
         log_lab(test_name="ESR", test_date="2026-03-10", value=10)
         log_lab(test_name="WBC", test_date="2026-03-15", value=7.0)
 
-        labs = get_recent_labs()
+        labs = get_labs_by_date()
         assert len(labs) == 1
         assert labs[0]["test_name"] == "WBC"
 
-    def test_get_recent_labs_by_test_name(self):
+    def test_get_labs_by_date_specific(self):
         """Get labs filtered by date."""
         log_lab(test_name="CRP", test_date="2026-03-10", value=0.5)
         log_lab(test_name="ESR", test_date="2026-03-10", value=10)
+        log_lab(test_name="WBC", test_date="2026-03-15", value=10)
 
-        labs = get_recent_labs(test_date="2026-03-10")
+        labs = get_labs_by_date(test_date="2026-03-10")
         assert len(labs) == 2
 
     def test_get_latest_labs_per_test(self):
@@ -363,6 +375,16 @@ class TestLabs:
 
         crp = next(l for l in labs if l["test_name"] == "CRP")
         assert crp["value"] == 0.5
+
+    def test_search_labs_by_test(self):
+        """Search for all results of a specific test."""
+        log_lab(test_name="CRP", test_date="2026-03-01", value=0.3)
+        log_lab(test_name="CRP", test_date="2026-03-10", value=0.5)
+        log_lab(test_name="ESR", test_date="2026-03-05", value=12)
+
+        labs = search_labs_by_test("CRP")
+        assert len(labs) == 2
+        assert all(l["test_name"] == "CRP" for l in labs)
 
     def test_get_logs_by_date_labs(self):
         """Get labs by specific date."""
@@ -433,12 +455,12 @@ class TestMedications:
         assert result["status"] == "logged"
         assert result["event"] == "started"
 
-    def test_get_recent_meds(self):
-        """Retrieve recent medication events."""
+    def test_get_current_and_recent_meds(self):
+        """Retrieve current medications and recent changes."""
         log_medication_event(medication="Med1", event_type="taken")
         log_medication_event(medication="Med2", event_type="started")
 
-        meds = get_recent_meds(days_back=1)
+        meds = get_current_and_recent_meds(days_back=1)
         assert len(meds) == 2
 
 

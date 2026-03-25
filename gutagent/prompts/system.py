@@ -26,7 +26,7 @@ def get_dynamic_context() -> str:
 
     # Medications - current + recent 30 days
     try:
-        meds = get_current_and_recent_meds(recent_days=30)
+        meds = get_current_and_recent_meds(days_back=30)
         if meds:
             lines = [
                 f"- [id:{m['id']}] {m['occurred_at']} [{m['event_type']}]: {m['medication']}"
@@ -54,11 +54,19 @@ def get_dynamic_context() -> str:
     except Exception as e:
         logger.debug("Error building Labs section: %s", e)
 
-    # Vitals - last 7d (get_recent_vitals returns pre-formatted string)
+    # Vitals - last 3d
     try:
-        vitals_text = get_recent_vitals(days_back=7)
-        if vitals_text:
-            sections.append(vitals_text)
+        vitals = get_recent_vitals(days_back=3)
+        if vitals:
+            lines = []
+            for v in vitals:
+                if v['vital_type'] == 'blood_pressure':
+                    reading = f"{v['systolic']}/{v['diastolic']} HR:{v.get('heart_rate') or '?'}"
+                else:
+                    reading = f"{v.get('value', '?')} {v.get('unit', '')}"
+                note = f" — {v.get('notes', '')[:70]}" if v.get('notes') else ""
+                lines.append(f"- [id:{v['id']}] {v['occurred_at'][:10]} {v['vital_type']}: {reading}{note}")
+            sections.append("## Vitals (3d)\n" + "\n".join(lines))
     except Exception as e:
         logger.debug("Error building Vitals section: %s", e)
 
@@ -75,9 +83,9 @@ def get_dynamic_context() -> str:
     except Exception as e:
         logger.debug("Error building Meals section: %s", e)
 
-    # Symptoms - last 7d
+    # Symptoms - last 3d
     try:
-        symptoms = get_recent_symptoms(days_back=7)
+        symptoms = get_recent_symptoms(days_back=3)
         if symptoms:
             lines = [
                 f"- [id:{s['id']}] {s['occurred_at']}: {s['symptom']} ({s['severity']})"

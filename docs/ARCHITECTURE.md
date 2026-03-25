@@ -174,6 +174,52 @@ The system prompt has two parts:
 
 This gives the LLM context without needing explicit queries for common questions like "what did I eat today?"
 
+### Dynamic Context Data Windows
+
+All data includes IDs for corrections (e.g., `[id:47]`).
+
+| Data | Days | Notes |
+|------|------|-------|
+| Medications | 30 | Current + recent changes |
+| Labs | Latest per test | Most recent value for each test type |
+| Vitals | 3 | |
+| Symptoms | 3 | |
+| Meals | 3 | With nutrition breakdown |
+| Sleep | 3 | |
+| Exercise | 3 | |
+| Journal | 3 | Max 5 entries |
+| Recipes | All | Per-serving nutrition |
+
+#### query_logs Tool
+
+Returns formatted summaries for analysis (token-efficient, no IDs).
+
+| Query Type | Default | Notes |
+|------------|---------|-------|
+| `recent_meals` | 7 days | |
+| `recent_symptoms` | 7 days | |
+| `recent_sleep` | 7 days | |
+| `recent_exercise` | 7 days | |
+| `recent_journal` | 7 days | |
+| `recent_vitals` | All | Returns summary with stats |
+| `recent_meds` | All | Returns summary with current + history |
+| `recent_labs` | Varies | Date (YYYY-MM-DD) or test name |
+
+Recipes have separate tools (`list_recipes`, `get_recipe`, etc.).
+
+#### Database Functions
+
+| Data | Logging | List (for context) | Summary (for query_logs) | Search |
+|------|---------|------------------|-------------------------|--------|
+| Meals | `log_meal_with_nutrition` | `get_recent_meals` | — | `search_meals_by_food` |
+| Symptoms | `log_symptom` | `get_recent_symptoms` | — | `search_symptoms` |
+| Vitals | `log_vital` | `get_recent_vitals` | `get_vitals_summary` | — |
+| Meds | `log_medication_event` | `get_current_and_recent_meds` | `get_meds_summary` | — |
+| Labs | `log_lab` | `get_latest_labs_per_test` | — | `get_labs_by_date`, `search_labs_by_test` |
+| Sleep | `log_sleep` | `get_recent_sleep` | — | — |
+| Exercise | `log_exercise` | `get_recent_exercise` | — | — |
+| Journal | `log_journal_entry` | `get_recent_journal` | — | — |
+
 ### Agent Loop
 
 ```
