@@ -2,7 +2,7 @@
 
 ## Now (Technical Debt)
 
-- [ ] Add tests for `system.py` and `llm/*`
+(empty)
 
 ## Next (Features)
 
@@ -21,6 +21,7 @@
 - [ ] Add util for transferring / syncing data across DBs.
 
 ## Done
+- [x] Add tests for `system.py` and `llm`
 - [x] Normalize token usage reporting across all providers (Claude semantics)
 - [x] Add context caching for Gemini/OpenAI provider (usage reporting)
 - [x] Add configurable cache TTL for Claude (5min default, 1h option)

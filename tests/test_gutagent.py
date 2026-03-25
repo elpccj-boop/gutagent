@@ -25,7 +25,7 @@ import tempfile
 from datetime import datetime
 
 # =============================================================================
-# IMPORTS - all db functions
+# IMPORTS
 # =============================================================================
 
 from gutagent.db import (
@@ -90,6 +90,14 @@ from gutagent.agent import run_agent
 from gutagent.llm.base import LLMResponse
 from gutagent.llm import get_provider
 from gutagent.core import format_recent_logs
+
+# System prompts
+from gutagent.prompts.system import (
+    get_dynamic_context,
+    get_nutrition_alerts_text,
+    build_static_system_prompt,
+    build_dynamic_context,
+)
 
 
 # =============================================================================
@@ -1203,7 +1211,6 @@ class TestRDA:
 
 from unittest.mock import MagicMock, patch
 
-
 class TestAgent:
     """Integration tests for the agent loop."""
 
@@ -1480,7 +1487,6 @@ try:
 except ImportError:
     HAS_FASTAPI = False
 
-
 @pytest.mark.skip(reason="API tests need test environment setup - uses real DB/profile")
 @pytest.mark.skipif(not HAS_FASTAPI, reason="FastAPI not installed")
 class TestAPI:
@@ -1546,7 +1552,7 @@ class TestAPI:
 
 
 # =============================================================================
-# LLM PROVIDERS
+# LLM PROVIDER TESTS
 # =============================================================================
 
 # Skip Claude provider tests if anthropic not installed
@@ -1555,7 +1561,6 @@ try:
     HAS_ANTHROPIC = True
 except ImportError:
     HAS_ANTHROPIC = False
-
 
 class TestLLMProviders:
     """Tests for LLM provider functionality."""
@@ -1686,6 +1691,182 @@ class TestLLMProviders:
 
         with pytest.raises(ValueError, match="Unknown provider"):
             get_provider("invalid_provider")
+
+
+# =============================================================================
+# SYSTEM PROMPT TESTS
+# =============================================================================
+
+class TestSystemPrompts:
+    """Tests for system prompt construction."""
+
+    def test_build_static_system_prompt_structure(self):
+        """Test static prompt contains required sections."""
+        profile = {
+            "personal": {"name": "Test User", "sex": "female", "dob": "1990-01-01"},
+            "conditions": ["IBS"],
+        }
+
+        prompt = build_static_system_prompt(profile)
+
+        # Check required sections exist
+        assert "GutAgent" in prompt
+        assert "Patient Profile" in prompt
+        assert "Test User" in prompt
+        assert "IBS" in prompt
+        assert "PROACTIVE LOGGING" in prompt
+        assert "NUTRITION" in prompt
+        assert "CORRECTIONS" in prompt
+        assert "TIMESTAMPS" in prompt
+
+    def test_build_static_system_prompt_json_profile(self):
+        """Test profile is embedded as JSON."""
+        profile = {
+            "personal": {"name": "Jane Doe"},
+            "triggers": ["gluten", "dairy"],
+        }
+
+        prompt = build_static_system_prompt(profile)
+
+        # Profile should be JSON-formatted
+        assert '"name": "Jane Doe"' in prompt
+        assert '"gluten"' in prompt
+        assert '"dairy"' in prompt
+
+    def test_get_dynamic_context_empty_db(self):
+        """Test dynamic context with no data returns something."""
+        context = get_dynamic_context()
+
+        # May return "No data logged yet." or vitals placeholder
+        # Just verify it's a non-empty string
+        assert isinstance(context, str)
+        assert len(context) > 0
+
+    def test_get_dynamic_context_with_meal(self):
+        """Test dynamic context includes logged meal."""
+        # Log a meal (meal_type, description, items, nutrition)
+        log_meal_with_nutrition(
+            "breakfast",
+            "test breakfast",
+            items=[{"food_name": "eggs", "quantity": 2, "unit": "large"}],
+            nutrition={"calories": 180, "protein": 12, "carbs": 1, "fat": 12, "fiber": 0},
+        )
+
+        context = get_dynamic_context()
+
+        assert "## Meals" in context
+        assert "test breakfast" in context
+        assert "180cal" in context
+
+    def test_get_dynamic_context_with_symptom(self):
+        """Test dynamic context includes logged symptom."""
+        log_symptom("bloating", severity=6, notes="after lunch")
+
+        context = get_dynamic_context()
+
+        assert "## Symptoms" in context
+        assert "bloating" in context
+        assert "(6)" in context
+
+    def test_get_dynamic_context_with_vitals(self):
+        """Test dynamic context includes logged vitals."""
+        log_vital("blood_pressure", systolic=120, diastolic=80, heart_rate=72)
+
+        context = get_dynamic_context()
+
+        # Vitals section uses different format
+        assert "120" in context
+        assert "80" in context
+
+    def test_get_dynamic_context_with_sleep(self):
+        """Test dynamic context includes logged sleep."""
+        log_sleep(hours=7.5, quality="good")
+
+        context = get_dynamic_context()
+
+        assert "## Sleep" in context
+        assert "7.5h" in context
+
+    def test_get_dynamic_context_with_exercise(self):
+        """Test dynamic context includes logged exercise."""
+        log_exercise("walking", duration_minutes=30)
+
+        context = get_dynamic_context()
+
+        assert "## Exercise" in context
+        assert "walking" in context
+        assert "30min" in context
+
+    def test_get_dynamic_context_with_recipe(self):
+        """Test dynamic context includes saved recipes."""
+        save_recipe(
+            name="Test Oatmeal",
+            ingredients=[{"name": "oats", "amount": 1, "unit": "cup"}],
+            servings=2,
+            nutrition={"calories": 150, "protein": 5, "carbs": 27, "fat": 3, "fiber": 4},
+        )
+
+        context = get_dynamic_context()
+
+        assert "## Recipes" in context
+        assert "Test Oatmeal" in context
+        # Per-serving nutrition: 150/2 = 75cal
+        assert "75cal" in context
+
+    def test_get_nutrition_alerts_text_no_data(self):
+        """Test nutrition alerts with no nutrition data."""
+        alerts = get_nutrition_alerts_text()
+
+        # Should return empty string when no data
+        assert alerts == ""
+
+    def test_get_nutrition_alerts_text_returns_string(self):
+        """Test nutrition alerts returns a string."""
+        # Log a meal with nutrition
+        log_meal_with_nutrition(
+            "lunch",
+            "plain rice",
+            items=[{"food_name": "rice", "quantity": 1, "unit": "cup"}],
+            nutrition={
+                "calories": 200, "protein": 4, "carbs": 45, "fat": 0, "fiber": 1,
+                "iron": 0.5,
+            },
+        )
+
+        alerts = get_nutrition_alerts_text()
+
+        # Just verify it returns a string (empty or with content)
+        assert isinstance(alerts, str)
+
+    def test_build_dynamic_context_structure(self):
+        """Test full dynamic context has required sections."""
+        context = build_dynamic_context()
+
+        # Should have date/time section
+        assert "## Current Date and Time" in context
+        # Should have data section
+        assert "## Current Data from Patient's Records" in context
+
+    def test_build_dynamic_context_includes_timestamp(self):
+        """Test dynamic context includes current date."""
+        from datetime import datetime
+
+        context = build_dynamic_context()
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        assert today in context
+
+    def test_dynamic_context_truncates_long_notes(self):
+        """Test that long notes are truncated to 70 chars."""
+        long_note = "A" * 100  # 100 character note
+        log_symptom("headache", severity=5, notes=long_note)
+
+        context = get_dynamic_context()
+
+        # Should not contain full 100-char note
+        assert "A" * 100 not in context
+        # Should contain truncated version (70 chars)
+        assert "A" * 70 in context
 
 
 # =============================================================================
