@@ -85,6 +85,12 @@ from gutagent.profile import load_profile, save_profile, update_profile
 # Registry
 from gutagent.tools.registry import execute_tool
 
+# Agent and LLM
+from gutagent.agent import run_agent
+from gutagent.llm.base import LLMResponse
+from gutagent.llm import get_provider
+from gutagent.core import format_recent_logs
+
 
 # =============================================================================
 # FIXTURES
@@ -1203,8 +1209,6 @@ class TestAgent:
 
     def test_agent_simple_text_response(self):
         """Agent returns text when LLM gives end_turn."""
-        from gutagent.agent import run_agent
-        from gutagent.llm.base import LLMResponse
 
         # Mock LLM that returns a simple text response
         mock_response = LLMResponse(
@@ -1230,8 +1234,6 @@ class TestAgent:
 
     def test_agent_tool_call_and_response(self):
         """Agent executes tool and returns final response."""
-        from gutagent.agent import run_agent
-        from gutagent.llm.base import LLMResponse
 
         # First response: LLM wants to call a tool
         tool_call_response = LLMResponse(
@@ -1269,8 +1271,6 @@ class TestAgent:
 
     def test_agent_tracks_meal_in_recent_logs(self):
         """Agent tracks logged meals in recent_logs for corrections."""
-        from gutagent.agent import run_agent
-        from gutagent.llm.base import LLMResponse
 
         # First response: log meal
         tool_call_response = LLMResponse(
@@ -1313,8 +1313,6 @@ class TestAgent:
 
     def test_agent_preserves_last_exchange(self):
         """Agent includes last_exchange in messages for context."""
-        from gutagent.agent import run_agent
-        from gutagent.llm.base import LLMResponse
 
         mock_response = LLMResponse(
             content=[{"type": "text", "text": "Yes, I can help with that."}],
@@ -1349,8 +1347,6 @@ class TestAgent:
 
     def test_agent_max_iterations_safety(self):
         """Agent stops after max iterations to prevent infinite loops."""
-        from gutagent.agent import run_agent
-        from gutagent.llm.base import LLMResponse
 
         # LLM keeps requesting tools forever
         endless_tool_response = LLMResponse(
@@ -1380,8 +1376,6 @@ class TestAgent:
 
     def test_agent_multiple_tool_calls(self):
         """Agent handles multiple tool calls in one response."""
-        from gutagent.agent import run_agent
-        from gutagent.llm.base import LLMResponse
 
         # LLM wants to call two tools at once
         multi_tool_response = LLMResponse(
@@ -1424,7 +1418,6 @@ class TestAgent:
 
     def test_format_recent_logs(self):
         """Test recent_logs formatting for prompt."""
-        from gutagent.core import format_recent_logs
 
         recent_logs = {
             "meals": [{"id": 1, "summary": "eggs and toast"}],
@@ -1442,14 +1435,12 @@ class TestAgent:
 
     def test_format_recent_logs_empty(self):
         """Test empty recent_logs returns empty string."""
-        from gutagent.core import format_recent_logs
 
         assert format_recent_logs({}) == ""
         assert format_recent_logs(None) == ""
 
     def test_format_recent_logs_recipe(self):
         """Test recipe formatting shows name and ingredients."""
-        from gutagent.core import format_recent_logs
 
         recent_logs = {
             "recipes": [{
@@ -1552,6 +1543,149 @@ class TestAPI:
         response = client.get("/")
         assert response.status_code == 200
         assert "text/html" in response.headers.get("content-type", "")
+
+
+# =============================================================================
+# LLM PROVIDERS
+# =============================================================================
+
+# Skip Claude provider tests if anthropic not installed
+try:
+    import anthropic
+    HAS_ANTHROPIC = True
+except ImportError:
+    HAS_ANTHROPIC = False
+
+
+class TestLLMProviders:
+    """Tests for LLM provider functionality."""
+
+    @pytest.mark.skipif(not HAS_ANTHROPIC, reason="anthropic not installed")
+    def test_claude_prepare_cached_request_tuple(self):
+        """Test Claude cache control with (static, dynamic) tuple."""
+        from gutagent.llm.claude_provider import ClaudeProvider
+
+        # Create provider without API key (we won't make actual calls)
+        provider = ClaudeProvider.__new__(ClaudeProvider)
+        provider.cache_ttl = None  # Default 5-minute cache
+
+        static = "You are a helpful assistant."
+        dynamic = "Recent context here."
+        tools = [{"name": "test_tool", "description": "A test", "input_schema": {"type": "object"}}]
+
+        cached_system, cached_tools = provider._prepare_cached_request((static, dynamic), tools)
+
+        # Should have 2 blocks: static (cached) and dynamic (not cached)
+        assert len(cached_system) == 2
+        assert cached_system[0]["text"] == static
+        assert cached_system[0]["cache_control"] == {"type": "ephemeral"}
+        assert cached_system[1]["text"] == dynamic
+        assert "cache_control" not in cached_system[1]
+
+        # Last tool should be marked for caching
+        assert cached_tools[-1]["cache_control"] == {"type": "ephemeral"}
+
+    @pytest.mark.skipif(not HAS_ANTHROPIC, reason="anthropic not installed")
+    def test_claude_prepare_cached_request_with_1h_ttl(self):
+        """Test Claude cache control with 1-hour TTL."""
+        from gutagent.llm.claude_provider import ClaudeProvider
+
+        provider = ClaudeProvider.__new__(ClaudeProvider)
+        provider.cache_ttl = "1h"
+
+        static = "You are a helpful assistant."
+        dynamic = "Recent context here."
+        tools = []
+
+        cached_system, cached_tools = provider._prepare_cached_request((static, dynamic), tools)
+
+        # Should include TTL in cache_control
+        assert cached_system[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+    @pytest.mark.skipif(not HAS_ANTHROPIC, reason="anthropic not installed")
+    def test_claude_prepare_cached_request_legacy_string(self):
+        """Test Claude cache control with legacy single-string prompt."""
+        from gutagent.llm.claude_provider import ClaudeProvider
+
+        provider = ClaudeProvider.__new__(ClaudeProvider)
+        provider.cache_ttl = None
+
+        prompt = "You are a helpful assistant with all context here."
+        tools = []
+
+        cached_system, cached_tools = provider._prepare_cached_request(prompt, tools)
+
+        # Should have 1 block, all cached
+        assert len(cached_system) == 1
+        assert cached_system[0]["text"] == prompt
+        assert cached_system[0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_llm_response_usage(self):
+        """Test LLMResponse properly stores usage data."""
+        usage = {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cache_creation_input_tokens": 500,
+            "cache_read_input_tokens": 0,
+        }
+
+        response = LLMResponse(
+            content=[{"type": "text", "text": "Hello"}],
+            stop_reason="end_turn",
+            usage=usage,
+        )
+
+        assert response.usage == usage
+        assert response.usage["input_tokens"] == 100
+        assert response.usage["cache_creation_input_tokens"] == 500
+
+    def test_llm_response_get_text(self):
+        """Test LLMResponse.get_text() extracts text content."""
+        response = LLMResponse(
+            content=[
+                {"type": "text", "text": "Hello"},
+                {"type": "tool_use", "id": "1", "name": "test", "input": {}},
+                {"type": "text", "text": "world"},
+            ],
+            stop_reason="end_turn",
+        )
+
+        # get_text joins with newline
+        assert response.get_text() == "Hello\nworld"
+
+    def test_llm_response_get_tool_calls(self):
+        """Test LLMResponse.get_tool_calls() extracts tool calls."""
+        response = LLMResponse(
+            content=[
+                {"type": "text", "text": "Let me help"},
+                {"type": "tool_use", "id": "1", "name": "log_meal", "input": {"description": "lunch"}},
+                {"type": "tool_use", "id": "2", "name": "log_symptom", "input": {"symptom": "headache"}},
+            ],
+            stop_reason="tool_use",
+        )
+
+        tool_calls = response.get_tool_calls()
+        assert len(tool_calls) == 2
+        assert tool_calls[0]["name"] == "log_meal"
+        assert tool_calls[1]["name"] == "log_symptom"
+
+    @pytest.mark.skipif(not HAS_ANTHROPIC, reason="anthropic not installed")
+    def test_get_provider_claude(self):
+        """Test get_provider returns Claude provider."""
+        from gutagent.llm.claude_provider import ClaudeProvider
+
+        # Skip if no API key (can't instantiate without it)
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            pytest.skip("ANTHROPIC_API_KEY not set")
+
+        provider = get_provider("claude")
+        assert isinstance(provider, ClaudeProvider)
+
+    def test_get_provider_invalid(self):
+        """Test get_provider raises for unknown provider."""
+
+        with pytest.raises(ValueError, match="Unknown provider"):
+            get_provider("invalid_provider")
 
 
 # =============================================================================

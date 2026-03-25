@@ -29,10 +29,6 @@ def get_model_for_tier(tier: str = "default", provider: str = None) -> str:
 
 MAX_TOKENS = 4096
 
-# API keys
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
 # Database
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "gutagent.db")
 PROFILE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "profile.json")

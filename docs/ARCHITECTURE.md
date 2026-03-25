@@ -112,9 +112,39 @@ tests/
 
 *Cost format: input/output per million tokens*
 
-For typical usage (~10K input, ~1K output per interaction): Gemini Flash ≈ $0.005, Claude Haiku ≈ $0.015, GPT-4o-mini ≈ $0.002.
+Typical usage cost (~10K input, ~1K output / interaction):  
+Claude Haiku: ~\$0.015, Gemini Flash: ~\$0.005, GPT-4o-mini: ~\$0.002.
 
 Configure in `.env` (see Configuration section below).
+
+### Streaming Support
+
+All providers support true streaming in both CLI and Web UI:
+- **Claude**: Native SSE streaming via `messages.stream()`
+- **Gemini**: Native streaming via `generate_content_stream()`
+- **OpenAI**: Native streaming via `stream=True`
+
+### Prompt Caching
+
+All providers implement prompt caching to reduce costs and latency:
+
+| Provider | Cache Type | TTL | Discount |
+|----------|-----------|-----|----------|
+| Claude | Explicit (cache_control markers) | 5 min (default) or 1 hour | 90% read, +25% write |
+| Gemini | Explicit (caches.create API) | 1 hour minimum | 90% (2.5+), 75% (2.0) |
+| OpenAI | Automatic (prefix matching) | 5-10 min | 50% |
+
+**What gets cached:**
+- Static prompt (~5-6k tokens): System instructions, profile, tool definitions
+- **Not cached**: Dynamic context (recent meals, vitals, alerts, conversation)
+
+**Token usage is normalized** across all providers to match Claude's semantics:
+- `input_tokens`: Uncached input only (dynamic context + user message)
+- `cache_creation_input_tokens`: Tokens written to cache (first request)
+- `cache_read_input_tokens`: Tokens read from cache (subsequent requests)
+- `output_tokens`: Model's response
+
+Total input = `input_tokens` + (`cache_creation_input_tokens` OR `cache_read_input_tokens`)
 
 ## Core Concepts
 
@@ -270,10 +300,14 @@ Create a `.env` file in the project root (copy from `.env.example`):
 # LLM Provider (pick one)
 LLM_PROVIDER=claude          # claude, gemini, or openai
 
-# API Keys (at least one required)
+# API Keys (only need the one for your chosen provider)
 ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_API_KEY=AIza...
+GEMINI_API_KEY=AIza...
 OPENAI_API_KEY=sk-...
+
+# Claude Cache TTL (optional)
+# Default is 5 minutes. Set to "1h" for 1-hour cache (slightly higher cost)
+# CLAUDE_CACHE_TTL=1h
 
 # Web Authentication (optional, for remote access)
 GUTAGENT_USERNAME=yourname
@@ -313,10 +347,9 @@ Tests use a temporary database and profile — your real data is never touched.
 
 ## Known Limitations
 
-1. **Web streaming is Claude-only** — Gemini/OpenAI use non-streaming fallback in web UI
-2. **No offline queue** — Web UI requires connectivity
-3. **Session state in memory** — Web sessions lost on server restart
-4. **Single user** — No multi-user support (personal tool)
+1. **No offline queue** — Web UI requires connectivity
+2. **Session state in memory** — Web sessions lost on server restart
+3. **Single user** — No multi-user support (personal tool)
 
 ## Future Considerations
 

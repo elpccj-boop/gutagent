@@ -97,8 +97,20 @@ async def run_agent_streaming(
     Streaming version of the agent loop.
     Yields Server-Sent Events as the LLM generates responses.
 
-    Supports Claude (with caching) and Gemini providers.
-    Tracks recent_logs and last_exchange per session for corrections.
+    Supports Claude, Gemini, and OpenAI providers with provider-specific caching:
+
+    Prompt Structure:
+    - static_prompt (~6k tokens): System instructions, tool descriptions, rules
+    - dynamic_context (~200-500 tokens): Recent meals, vitals, alerts, last exchange
+
+    Caching Strategies (see helper functions for details):
+    - Claude: Both in system prompt, static marked with cache_control (5 min TTL)
+    - Gemini: Static in system prompt (explicit cache, 1hr TTL), dynamic in user message
+    - OpenAI: Static in system prompt (auto prefix cache, ~5-10 min), dynamic in user message
+
+    Session State:
+    - recent_logs: Tracks logs created in current session for corrections
+    - last_exchange: Last user/assistant exchange for follow-up context
     """
     from gutagent.llm import get_provider
 
@@ -129,15 +141,28 @@ async def run_agent_streaming(
     try:
         for iteration in range(MAX_ITERATIONS):
             if LLM_PROVIDER == "claude":
-                # Claude-specific streaming with full event handling and caching
-                # Format system prompt for Claude caching
-                claude_system = [
-                    {"type": "text", "text": static_prompt, "cache_control": {"type": "ephemeral"}},
-                    {"type": "text", "text": dynamic_context}
-                ]
-
+                # Claude-specific streaming with prompt caching
                 async for event in _stream_claude_iteration(
-                    llm, messages, claude_system, show_tools,
+                    llm, messages, static_prompt, dynamic_context, show_tools,
+                    recent_logs, logs_this_turn
+                ):
+                    if event.get("_done"):
+                        response_text = event.get("response_text", "")
+                        new_exchange = finalize_turn(user_message, response_text, recent_logs, logs_this_turn)
+                        session["recent_logs"] = recent_logs
+                        session["last_exchange"] = new_exchange
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                        return
+                    elif event.get("_continue"):
+                        messages = event["messages"]
+                    else:
+                        yield f"data: {json.dumps(event)}\n\n"
+            else:
+                # Generic provider streaming (Gemini, OpenAI)
+                # For Gemini with caching: static_prompt is cached, dynamic_context is prepended to messages
+                # For OpenAI: both are combined in system prompt (no caching benefit)
+                async for event in _stream_generic_iteration(
+                    llm, messages, static_prompt, dynamic_context, show_tools,
                     recent_logs, logs_this_turn
                 ):
                     if event.get("_done"):
@@ -154,57 +179,6 @@ async def run_agent_streaming(
                     else:
                         # Stream event to client
                         yield f"data: {json.dumps(event)}\n\n"
-            else:
-                # Generic provider (Gemini, OpenAI, etc.) - non-streaming
-                system_prompt = (static_prompt, dynamic_context)
-                response = llm.chat(messages, system_prompt, TOOLS, MAX_TOKENS)
-
-                # Yield text content
-                for block in response.content:
-                    if block.get("type") == "text":
-                        yield f"data: {json.dumps({'type': 'text', 'content': block['text']})}\n\n"
-
-                # Yield usage if available
-                if response.usage:
-                    yield f"data: {json.dumps({'type': 'usage', **response.usage})}\n\n"
-
-                if response.stop_reason == "tool_use":
-                    # Add assistant message with tool calls
-                    messages.append({"role": "assistant", "content": response.content})
-
-                    # Execute tools
-                    tool_results = []
-                    for block in response.get_tool_calls():
-                        tool_name = block["name"]
-                        tool_input = block["input"]
-
-                        if show_tools:
-                            yield f"data: {json.dumps({'type': 'tool_call', 'name': tool_name, 'input': tool_input})}\n\n"
-
-                        result = execute_tool(tool_name, tool_input)
-
-                        if show_tools:
-                            display_result = result[:300] + "..." if len(result) > 300 else result
-                            yield f"data: {json.dumps({'type': 'tool_result', 'name': tool_name, 'result': display_result})}\n\n"
-
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block["id"],
-                            "content": result,
-                        })
-
-                        # Track for edit context
-                        track_log_operation(tool_name, tool_input, result, recent_logs, logs_this_turn)
-
-                    messages.append({"role": "user", "content": tool_results})
-                else:
-                    # Final response
-                    response_text = response.get_text()
-                    new_exchange = finalize_turn(user_message, response_text, recent_logs, logs_this_turn)
-                    session["recent_logs"] = recent_logs
-                    session["last_exchange"] = new_exchange
-                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                    return
 
         # Safety: max iterations reached
         yield f"data: {json.dumps({'type': 'error', 'message': 'Max iterations reached'})}\n\n"
@@ -219,16 +193,138 @@ async def run_agent_streaming(
         elif "timeout" in error_msg.lower():
             error_msg = "Request timed out. Please try again."
         else:
-            # Keep it short but informative
             error_msg = f"LLM error: {error_msg[:200]}"
 
         yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
 
 
-async def _stream_claude_iteration(llm, messages, system_prompt, show_tools, recent_logs, logs_this_turn):
-    """Handle one iteration of Claude streaming with tool execution."""
+async def _stream_generic_iteration(llm, messages, static_prompt, dynamic_context, show_tools, recent_logs, logs_this_turn):
+    """Handle one iteration of generic provider streaming with tool execution.
+
+    Gemini Caching Strategy:
+    - Gemini uses explicit caching via client.caches.create()
+    - The entire system_instruction is cached as a unit (no partial caching)
+    - To cache only static content, we must move dynamic context elsewhere
+    - Static prompt: passed as system_instruction (cached for 1 hour)
+    - Dynamic context: prepended to first user message (not cached)
+    - Cache is created/managed in GeminiProvider._get_or_create_cache()
+
+    OpenAI Caching Strategy:
+    - OpenAI uses automatic prefix caching (no explicit API)
+    - Caches prompts ≥1024 tokens based on exact prefix match
+    - Cache hits occur when the system message prefix is identical
+    - Static prompt: passed as system message (auto-cached ~5-10 min)
+    - Dynamic context: prepended to first user message (not in cached prefix)
+
+    Both Gemini and OpenAI require this workaround because they don't support
+    partial caching within the system prompt like Claude does.
+    """
+    from gutagent.config import TOOLS, MAX_TOKENS
+
+    collected_text = ""
+
+    # Move dynamic context from system prompt to first user message
+    # This keeps the system prompt static for caching (both Gemini explicit and OpenAI automatic)
+    if dynamic_context:
+        messages_with_context = []
+        context_added = False
+        for msg in messages:
+            if msg["role"] == "user" and not context_added:
+                content = msg["content"]
+                if isinstance(content, str):
+                    # Wrap in clear tags so the model understands the structure
+                    content = f"[Current Context]\n{dynamic_context}\n\n[User Message]\n{content}"
+                messages_with_context.append({"role": "user", "content": content})
+                context_added = True
+            else:
+                messages_with_context.append(msg)
+        messages_to_use = messages_with_context
+    else:
+        messages_to_use = messages
+
+    # System prompt contains ONLY static content for caching
+    # - Gemini: This is passed to caches.create() and cached explicitly
+    # - OpenAI: This becomes the prefix that's auto-cached on repeated requests
+    system_prompt = static_prompt
+
+    # Use the provider's streaming interface
+    gen = llm.chat_stream(messages_to_use, system_prompt, TOOLS, MAX_TOKENS)
+
+    # Yield streaming events
+    try:
+        while True:
+            event = next(gen)
+            if event.get("type") == "text":
+                collected_text += event.get("content", "")
+            yield event
+    except StopIteration as e:
+        # Generator returned the final LLMResponse
+        response = e.value
+
+    # Yield usage if available
+    if response.usage:
+        yield {"type": "usage", **response.usage}
+
+    if response.stop_reason == "tool_use":
+        # Add assistant message with tool calls
+        messages.append({"role": "assistant", "content": response.content})
+
+        # Execute tools
+        tool_results = []
+        for block in response.get_tool_calls():
+            tool_name = block["name"]
+            tool_input = block["input"]
+
+            if show_tools:
+                yield {"type": "tool_call", "name": tool_name, "input": tool_input}
+
+            result = execute_tool(tool_name, tool_input)
+
+            if show_tools:
+                display_result = result[:300] + "..." if len(result) > 300 else result
+                yield {"type": "tool_result", "name": tool_name, "result": display_result}
+
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block["id"],
+                "tool_name": block["name"],  # Needed for Gemini
+                "content": result,
+            })
+
+            # Track for edit context
+            track_log_operation(tool_name, tool_input, result, recent_logs, logs_this_turn)
+
+        messages.append({"role": "user", "content": tool_results})
+
+        # Signal to continue loop
+        yield {"_continue": True, "messages": messages}
+    else:
+        # Final text response
+        response_text = response.get_text()
+        yield {"_done": True, "response_text": response_text}
+
+
+async def _stream_claude_iteration(llm, messages, static_prompt, dynamic_context, show_tools, recent_logs, logs_this_turn):
+    """Handle one iteration of Claude streaming with tool execution and prompt caching.
+
+    Claude Caching Strategy:
+    - Claude supports multiple content blocks in the system prompt
+    - Each block can have its own cache_control setting
+    - Static prompt: marked with cache_control=ephemeral (cached for 5 min)
+    - Dynamic context: no cache_control (not cached, but still in system prompt)
+
+    This is the cleanest approach - both static and dynamic content stay in the
+    system prompt where they semantically belong, with fine-grained cache control.
+    """
     import anthropic
     client = anthropic.Anthropic()
+
+    # Claude's system prompt supports an array of content blocks
+    # We cache the static prompt (instructions, tools) but not the dynamic context
+    system_prompt = [
+        {"type": "text", "text": static_prompt, "cache_control": {"type": "ephemeral"}},  # Cached 5 min
+        {"type": "text", "text": dynamic_context}  # Not cached - changes per request
+    ]
 
     current_text = ""
 

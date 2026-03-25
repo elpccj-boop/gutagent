@@ -2,25 +2,29 @@
 
 ## Now (Technical Debt)
 
-- [ ] Investigate static and dynamic token usage
+- [ ] Add tests for `system.py` and `llm/*`
 
 ## Next (Features)
 
 - [ ] Setup wizard for new users
-- [ ] Web streaming for Gemini/OpenAI (currently Claude-only)
 
 ## Later (Nice to Have)
 
-- [ ] Add context caching for Gemini provider
 - [ ] Offline queue for web UI
 - [ ] Permanent URL (purchase domain for Cloudflare)
+- [ ] Connection Pooling
 
 ## Backlog
 
 - [ ] Confirm query_log defaults for #days to go back
 - [ ] Add API endpoint tests
+- [ ] Add util for transferring / syncing data across DBs.
 
 ## Done
+- [x] Normalize token usage reporting across all providers (Claude semantics)
+- [x] Add context caching for Gemini/OpenAI provider (usage reporting)
+- [x] Add configurable cache TTL for Claude (5min default, 1h option)
+- [x] Add web streaming for Gemini/OpenAI providers
 - [x] Add recipes to recent logs so they can be corrected
 - [x] Same symptom should not be logged repeatedly while chatting
 - [x] Verify labs are logged without test date errors

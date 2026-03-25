@@ -39,6 +39,10 @@ def run_agent(
 
     Returns:
         Tuple of (response_text, updated_recent_logs, new_last_exchange).
+
+    Caching Strategy:
+        - Claude: Both static and dynamic in system prompt, static marked for caching
+        - Gemini/OpenAI: Static in system prompt (cached), dynamic prepended to user message
     """
     if recent_logs is None:
         recent_logs = {}
@@ -46,7 +50,7 @@ def run_agent(
         last_exchange = {}
 
     # Build system prompt as (static, dynamic) tuple for proper caching
-    system_prompt = build_system_prompt(profile, recent_logs)
+    static_prompt, dynamic_context = build_system_prompt(profile, recent_logs)
 
     # Use passed model or default
     if model is None:
@@ -58,6 +62,27 @@ def run_agent(
 
     # Build messages with last exchange context
     messages = build_messages(user_message, last_exchange)
+
+    # Prepare system prompt based on provider
+    # Claude: supports per-block cache control, so pass tuple as-is
+    # Gemini/OpenAI: cache entire system prompt, move dynamic context to user message
+    if provider_name == "claude":
+        # Claude handles the tuple directly in its provider
+        system_prompt = (static_prompt, dynamic_context)
+    else:
+        # Gemini/OpenAI: prepend dynamic context to first user message
+        # This keeps system prompt static for caching
+        if dynamic_context:
+            for i, msg in enumerate(messages):
+                if msg["role"] == "user":
+                    content = msg["content"]
+                    if isinstance(content, str):
+                        messages[i] = {
+                            "role": "user",
+                            "content": f"[Current Context]\n{dynamic_context}\n\n[User Message]\n{content}"
+                        }
+                    break
+        system_prompt = static_prompt
 
     # Track logs created this turn
     logs_this_turn = {}

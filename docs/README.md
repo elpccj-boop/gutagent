@@ -40,10 +40,13 @@ Create a `.env` file in the project root:
 # LLM Provider
 LLM_PROVIDER=claude          # claude, gemini, or openai
 
-# API Key (at least one required)
+# API Key (only need the one for your chosen provider)
 ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_API_KEY=AIza...
+GEMINI_API_KEY=AIza...
 OPENAI_API_KEY=sk-...
+
+# Claude Cache TTL (optional, default 5 min)
+# CLAUDE_CACHE_TTL=1h        # Set to "1h" for 1-hour cache
 
 # Web Authentication (optional, for remote access)
 GUTAGENT_USERNAME=yourname
@@ -52,11 +55,11 @@ GUTAGENT_PASSWORD=yourpassword
 
 ### LLM Providers
 
-| Provider | Default | Smart | Cost (per 1M tokens) | Notes |
-|----------|---------|-------|----------------------|-------|
-| Claude | Haiku 4.5 | Sonnet 4.5 | $1/$5 — $3/$15 | Best tool calling, native streaming |
-| Gemini | 2.5 Flash | 2.5 Pro | $0.30/$2.50 — $1.25/$10 | Free tier available, good quality |
-| OpenAI | GPT-4o-mini | GPT-4o | $0.15/$0.60 — $2.50/$10 | Widely used, cheapest default tier |
+| Provider | Default | Smart | Cost (per 1M tokens) | Streaming | Caching |
+|----------|---------|-------|----------------------|-----------|---------|
+| Claude | Haiku 4.5 | Sonnet 4.5 | $1/$5 — $3/$15 | ✅ | 5min/1h, 90% discount |
+| Gemini | 2.5 Flash | 2.5 Pro | $0.30/$2.50 — $1.25/$10 | ✅ | 1h, 90% discount |
+| OpenAI | GPT-4o-mini | GPT-4o | $0.15/$0.60 — $2.50/$10 | ✅ | Auto, 50% discount |
 
 *Cost format: input/output per million tokens*
 
@@ -183,6 +186,6 @@ Tests use a temporary database and profile — your data is never touched.
 
 ## Known Limitations
 
-- Web streaming is Claude-only (Gemini/OpenAI use non-streaming fallback)
 - Single user (personal tool, no multi-user support)
 - Session state in memory (lost on server restart)
+- No offline queue (web UI requires connectivity)
