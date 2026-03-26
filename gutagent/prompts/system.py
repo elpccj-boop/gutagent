@@ -131,39 +131,12 @@ def get_dynamic_context() -> str:
     except Exception as e:
         logger.debug("Error building Journal section: %s", e)
 
-    # Recipes - with per-serving nutrition
+    # Recipes - names only (backend fetches nutrition automatically)
     try:
         recipes = list_recipes()
         if recipes:
-            lines = ["## Recipes (per serving)"]
-            for r in recipes:
-                nutr = r.get('nutrition', {})
-
-                cal = int(nutr.get('calories') or 0)
-                pro = int(nutr.get('protein') or 0)
-                carb = int(nutr.get('carbs') or 0)
-                fat = int(nutr.get('fat') or 0)
-                macros = f"{cal}cal {pro}p {carb}c {fat}f"
-
-                micros = []
-                if nutr.get('vitamin_b12'): micros.append(f"B12:{nutr['vitamin_b12']:.1f}")
-                if nutr.get('vitamin_d'): micros.append(f"D:{int(nutr['vitamin_d'])}")
-                if nutr.get('iron'): micros.append(f"Fe:{nutr['iron']:.1f}")
-                if nutr.get('calcium'): micros.append(f"Ca:{int(nutr['calcium'])}")
-                if nutr.get('omega_3'): micros.append(f"ω3:{nutr['omega_3']:.1f}")
-                if nutr.get('folate'): micros.append(f"fol:{int(nutr['folate'])}")
-                if nutr.get('zinc'): micros.append(f"Zn:{nutr['zinc']:.1f}")
-                if nutr.get('magnesium'): micros.append(f"Mg:{int(nutr['magnesium'])}")
-                if nutr.get('potassium'): micros.append(f"K:{int(nutr['potassium'])}")
-                if nutr.get('vitamin_a'): micros.append(f"A:{int(nutr['vitamin_a'])}")
-                if nutr.get('vitamin_c'): micros.append(f"C:{int(nutr['vitamin_c'])}")
-                if nutr.get('fiber'): micros.append(f"fib:{int(nutr['fiber'])}")
-
-                micro_str = " ".join(micros) if micros else ""
-                srv = r.get('servings') or 1
-                servings = int(srv) if srv == int(srv) else srv
-                lines.append(f"- {r['name']} ({servings}srv): {macros} | {micro_str}")
-            sections.append("\n".join(lines))
+            names = [r['name'] for r in recipes]
+            sections.append(f"## Saved Recipes\n{', '.join(names)}")
     except Exception as e:
         logger.debug("Error building Recipes section: %s", e)
 

@@ -34,11 +34,6 @@ Usage Reporting (already matches normalized format):
     - cache_read_input_tokens: tokens read from cache (subsequent requests)
 
     Total input = input_tokens + cache_creation_input_tokens (or cache_read_input_tokens)
-
-Note on server.py:
-    The web streaming in server.py uses the Anthropic client directly rather than
-    this provider class. This is because the streaming API requires different
-    handling for SSE events. The caching logic there mirrors _prepare_cached_request().
 """
 
 import os

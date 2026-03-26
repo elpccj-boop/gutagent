@@ -1830,10 +1830,10 @@ class TestSystemPrompts:
 
         context = get_dynamic_context()
 
-        assert "## Recipes" in context
+        assert "## Saved Recipes" in context
         assert "Test Oatmeal" in context
-        # Per-serving nutrition: 150/2 = 75cal
-        assert "75cal" in context
+        # Per-serving nutrition: 150/2 = 75cal - not in context
+        assert "75cal" not in context
 
     def test_get_nutrition_alerts_text_no_data(self):
         """Test nutrition alerts with no nutrition data."""

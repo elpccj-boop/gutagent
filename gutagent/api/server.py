@@ -104,7 +104,7 @@ async def run_agent_streaming(
     - dynamic_context (~200-500 tokens): Recent meals, vitals, alerts, last exchange
 
     Caching Strategies (see helper functions for details):
-    - Claude: Both in system prompt, static marked with cache_control (5 min TTL)
+    - Claude: Both in system prompt, static marked with cache_control (TTL from CLAUDE_CACHE_TTL env)
     - Gemini: Static in system prompt (explicit cache, 1hr TTL), dynamic in user message
     - OpenAI: Static in system prompt (auto prefix cache, ~5-10 min), dynamic in user message
 
@@ -305,105 +305,64 @@ async def _stream_generic_iteration(llm, messages, static_prompt, dynamic_contex
 
 
 async def _stream_claude_iteration(llm, messages, static_prompt, dynamic_context, show_tools, recent_logs, logs_this_turn):
-    """Handle one iteration of Claude streaming with tool execution and prompt caching.
+    """Handle one iteration of Claude streaming with tool execution.
 
-    Claude Caching Strategy:
-    - Claude supports multiple content blocks in the system prompt
-    - Each block can have its own cache_control setting
-    - Static prompt: marked with cache_control=ephemeral (cached for 5 min)
-    - Dynamic context: no cache_control (not cached, but still in system prompt)
-
-    This is the cleanest approach - both static and dynamic content stay in the
-    system prompt where they semantically belong, with fine-grained cache control.
+    Uses ClaudeProvider.chat_stream() which handles caching internally.
+    Claude supports per-block cache control, so we pass (static, dynamic) tuple.
+    TTL is controlled by CLAUDE_CACHE_TTL env var in the provider.
     """
-    import anthropic
-    client = anthropic.Anthropic()
+    from gutagent.config import TOOLS, MAX_TOKENS
 
-    # Claude's system prompt supports an array of content blocks
-    # We cache the static prompt (instructions, tools) but not the dynamic context
-    system_prompt = [
-        {"type": "text", "text": static_prompt, "cache_control": {"type": "ephemeral"}},  # Cached 5 min
-        {"type": "text", "text": dynamic_context}  # Not cached - changes per request
-    ]
+    collected_text = ""
 
-    current_text = ""
+    # Claude handles the tuple directly - static gets cached, dynamic doesn't
+    system_prompt = (static_prompt, dynamic_context)
 
-    with client.messages.stream(
-        model=llm.model,
-        max_tokens=MAX_TOKENS,
-        system=system_prompt,
-        tools=TOOLS,
-        messages=messages,
-    ) as stream:
-        for event in stream:
-            if event.type == "content_block_start":
-                if event.content_block.type == "text":
-                    current_text = ""
-                elif event.content_block.type == "tool_use":
-                    if show_tools:
-                        yield {"type": "tool_start", "name": event.content_block.name}
+    # Use the provider's streaming interface (same as generic)
+    gen = llm.chat_stream(messages, system_prompt, TOOLS, MAX_TOKENS)
 
-            elif event.type == "content_block_delta":
-                if event.delta.type == "text_delta":
-                    current_text += event.delta.text
-                    yield {"type": "text", "content": event.delta.text}
+    # Yield streaming events
+    try:
+        while True:
+            event = next(gen)
+            if event.get("type") == "text":
+                collected_text += event.get("content", "")
+            yield event
+    except StopIteration as e:
+        # Generator returned the final LLMResponse
+        response = e.value
 
-            elif event.type == "content_block_stop":
-                pass
+    # Yield usage if available
+    if response.usage:
+        yield {"type": "usage", **response.usage}
 
-        final_message = stream.get_final_message()
-
-    # Yield usage
-    if hasattr(final_message, 'usage') and final_message.usage:
-        usage = final_message.usage
-        yield {
-            'type': 'usage',
-            'input_tokens': usage.input_tokens,
-            'output_tokens': usage.output_tokens,
-            'cache_creation_input_tokens': getattr(usage, 'cache_creation_input_tokens', 0),
-            'cache_read_input_tokens': getattr(usage, 'cache_read_input_tokens', 0),
-        }
-
-    if final_message.stop_reason == "tool_use":
-        # Build assistant content
-        assistant_content = []
-        for block in final_message.content:
-            if block.type == "text":
-                assistant_content.append({"type": "text", "text": block.text})
-            elif block.type == "tool_use":
-                assistant_content.append({
-                    "type": "tool_use",
-                    "id": block.id,
-                    "name": block.name,
-                    "input": block.input,
-                })
-
-        messages.append({"role": "assistant", "content": assistant_content})
+    if response.stop_reason == "tool_use":
+        # Add assistant message with tool calls
+        messages.append({"role": "assistant", "content": response.content})
 
         # Execute tools
         tool_results = []
-        for block in final_message.content:
-            if block.type == "tool_use":
-                tool_name = block.name
-                tool_input = block.input
+        for block in response.get_tool_calls():
+            tool_name = block["name"]
+            tool_input = block["input"]
 
-                if show_tools:
-                    yield {"type": "tool_call", "name": tool_name, "input": tool_input}
+            if show_tools:
+                yield {"type": "tool_call", "name": tool_name, "input": tool_input}
 
-                result = execute_tool(tool_name, tool_input)
+            result = execute_tool(tool_name, tool_input)
 
-                if show_tools:
-                    display_result = result[:300] + "..." if len(result) > 300 else result
-                    yield {"type": "tool_result", "name": tool_name, "result": display_result}
+            if show_tools:
+                display_result = result[:300] + "..." if len(result) > 300 else result
+                yield {"type": "tool_result", "name": tool_name, "result": display_result}
 
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block["id"],
+                "content": result,
+            })
 
-                # Track for edit context
-                track_log_operation(tool_name, tool_input, result, recent_logs, logs_this_turn)
+            # Track for edit context
+            track_log_operation(tool_name, tool_input, result, recent_logs, logs_this_turn)
 
         messages.append({"role": "user", "content": tool_results})
 
@@ -411,11 +370,7 @@ async def _stream_claude_iteration(llm, messages, static_prompt, dynamic_context
         yield {"_continue": True, "messages": messages}
     else:
         # Final text response
-        response_text = ""
-        for block in final_message.content:
-            if hasattr(block, "text"):
-                response_text += block.text
-
+        response_text = response.get_text()
         yield {"_done": True, "response_text": response_text}
 
 

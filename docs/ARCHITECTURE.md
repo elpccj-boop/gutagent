@@ -188,7 +188,7 @@ All data includes IDs for corrections (e.g., `[id:47]`).
 | Sleep | 3 | |
 | Exercise | 3 | |
 | Journal | 3 | Max 5 entries |
-| Recipes | All | Per-serving nutrition |
+| Recipes | All | Names only (backend fetches nutrition) |
 
 #### query_logs Tool
 
