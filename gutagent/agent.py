@@ -49,8 +49,8 @@ def run_agent(
     if last_exchange is None:
         last_exchange = {}
 
-    # Build system prompt as (static, dynamic) tuple for proper caching
-    static_prompt, dynamic_context = build_system_prompt(profile, recent_logs)
+    # Build system prompt as (static, patient_data, turn_context) tuple for three-tier caching
+    static_prompt, patient_data, turn_context = build_system_prompt(profile, recent_logs)
 
     # Use passed model or default
     if model is None:
@@ -64,14 +64,15 @@ def run_agent(
     messages = build_messages(user_message, last_exchange)
 
     # Prepare system prompt based on provider
-    # Claude: supports per-block cache control, so pass tuple as-is
+    # Claude: supports per-block cache control with multiple breakpoints
     # Gemini/OpenAI: cache entire system prompt, move dynamic context to user message
     if provider_name == "claude":
-        # Claude handles the tuple directly in its provider
-        system_prompt = (static_prompt, dynamic_context)
+        # Claude handles the 3-tuple directly: static + patient_data cached, turn_context not
+        system_prompt = (static_prompt, patient_data, turn_context)
     else:
-        # Gemini/OpenAI: prepend dynamic context to first user message
+        # Gemini/OpenAI: combine patient_data + turn_context and prepend to user message
         # This keeps system prompt static for caching
+        dynamic_context = f"{patient_data}\n\n{turn_context}"
         if dynamic_context:
             for i, msg in enumerate(messages):
                 if msg["role"] == "user":

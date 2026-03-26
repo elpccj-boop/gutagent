@@ -6,7 +6,8 @@
 
 ## Next (Features)
 
-- [ ] Setup wizard for new users
+- [ ] Setup wizard for new users (also serves as profile editor)
+- [ ] Mobile app (Expo, local-first SQLite, BYOK)
 
 ## Later (Nice to Have)
 
@@ -20,6 +21,11 @@
 - [ ] Add util for transferring / syncing data across DBs.
 
 ## Done
+- [x] Three-tier Claude caching (static + patient_data + turn_context)
+- [x] Add nutrition summary/alerts to patient data context
+- [x] Slim meals to descriptions only (nutrition now in summary)
+- [x] Centralize nutrition rounding in round_nutrition()
+- [x] Add lab dates to context display
 - [x] Refactor db functions for consistency (get_recent_*, get_*_summary, search_*)
 - [x] Add search_labs_by_test for lab history queries
 - [x] Document query_log defaults and data windows in ARCHITECTURE.md

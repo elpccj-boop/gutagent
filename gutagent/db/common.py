@@ -83,6 +83,6 @@ def round_nutrition(nutrition: dict) -> dict:
             rounded[nutrient] = round(value, 1)
         else:
             # Integer: everything else
-            rounded[nutrient] = round(value)
+            rounded[nutrient] = int(round(value))
 
     return rounded

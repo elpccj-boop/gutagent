@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta
 from .connection import get_connection
+from .common import round_nutrition
 
 
 # Global RDA targets - set by set_rda_targets()
@@ -122,12 +123,31 @@ def get_nutrition_summary(days: int = 3) -> str:
         return f"No nutrition data in last {days} days"
 
     d = row["days_with_data"]
-    def avg(v, decimals=0): return round(v / d, decimals) if v and d else 0
 
-    lines = [f"=== NUTRITION ({d} days with data) ==="]
-    lines.append(f"Daily avg: {avg(row['total_calories'])} cal, {avg(row['total_protein'])}g protein, {avg(row['total_carbs'])}g carbs, {avg(row['total_fat'])}g fat, {avg(row['total_fiber'])}g fiber")
-    lines.append(f"Micros avg: B12:{avg(row['total_b12'], 1)}μg, D:{avg(row['total_d'])}IU, folate:{avg(row['total_folate'])}μg, iron:{avg(row['total_iron'], 1)}mg, zinc:{avg(row['total_zinc'], 1)}mg")
-    lines.append(f"  Mg:{avg(row['total_magnesium'])}mg, Ca:{avg(row['total_calcium'])}mg, K:{avg(row['total_potassium'])}mg, ω3:{avg(row['total_omega_3'], 1)}g, A:{avg(row['total_vitamin_a'])}IU, C:{avg(row['total_vitamin_c'])}mg")
+    # Build daily averages dict and round appropriately
+    daily_avg = round_nutrition({
+        "calories": (row["total_calories"] or 0) / d,
+        "protein": (row["total_protein"] or 0) / d,
+        "carbs": (row["total_carbs"] or 0) / d,
+        "fat": (row["total_fat"] or 0) / d,
+        "fiber": (row["total_fiber"] or 0) / d,
+        "vitamin_b12": (row["total_b12"] or 0) / d,
+        "vitamin_d": (row["total_d"] or 0) / d,
+        "folate": (row["total_folate"] or 0) / d,
+        "iron": (row["total_iron"] or 0) / d,
+        "zinc": (row["total_zinc"] or 0) / d,
+        "magnesium": (row["total_magnesium"] or 0) / d,
+        "calcium": (row["total_calcium"] or 0) / d,
+        "potassium": (row["total_potassium"] or 0) / d,
+        "omega_3": (row["total_omega_3"] or 0) / d,
+        "vitamin_a": (row["total_vitamin_a"] or 0) / d,
+        "vitamin_c": (row["total_vitamin_c"] or 0) / d,
+    })
+
+    lines = [f"=== NUTRITION SUMMARY ({d}d) ==="]
+    lines.append(f"Daily avg: {daily_avg['calories']} cal, {daily_avg['protein']}g protein, {daily_avg['carbs']}g carbs, {daily_avg['fat']}g fat, {daily_avg['fiber']}g fiber")
+    lines.append(f"Micros avg: B12:{daily_avg['vitamin_b12']}μg, D:{daily_avg['vitamin_d']}IU, folate:{daily_avg['folate']}μg, iron:{daily_avg['iron']}mg, zinc:{daily_avg['zinc']}mg")
+    lines.append(f"  Mg:{daily_avg['magnesium']}mg, Ca:{daily_avg['calcium']}mg, K:{daily_avg['potassium']}mg, ω3:{daily_avg['omega_3']}g, A:{daily_avg['vitamin_a']}IU, C:{daily_avg['vitamin_c']}mg")
     return "\n".join(lines)
 
 
@@ -166,25 +186,25 @@ def get_nutrition_alerts(days: int = 3) -> str:
 
     d = row["days_with_data"]
 
-    # Calculate daily averages
-    daily_avg = {
-        "calories": round((row["total_calories"] or 0) / d),
-        "protein": round((row["total_protein"] or 0) / d),
-        "fat": round((row["total_fat"] or 0) / d),
-        "carbs": round((row["total_carbs"] or 0) / d),
-        "fiber": round((row["total_fiber"] or 0) / d),
-        "vitamin_b12": round((row["total_b12"] or 0) / d, 1),
-        "vitamin_d": round((row["total_d"] or 0) / d),
-        "folate": round((row["total_folate"] or 0) / d),
-        "iron": round((row["total_iron"] or 0) / d, 1),
-        "zinc": round((row["total_zinc"] or 0) / d, 1),
-        "magnesium": round((row["total_magnesium"] or 0) / d),
-        "calcium": round((row["total_calcium"] or 0) / d),
-        "potassium": round((row["total_potassium"] or 0) / d),
-        "omega_3": round((row["total_omega_3"] or 0) / d, 1),
-        "vitamin_a": round((row["total_vitamin_a"] or 0) / d),
-        "vitamin_c": round((row["total_vitamin_c"] or 0) / d),
-    }
+    # Calculate daily averages using shared rounding logic
+    daily_avg = round_nutrition({
+        "calories": (row["total_calories"] or 0) / d,
+        "protein": (row["total_protein"] or 0) / d,
+        "fat": (row["total_fat"] or 0) / d,
+        "carbs": (row["total_carbs"] or 0) / d,
+        "fiber": (row["total_fiber"] or 0) / d,
+        "vitamin_b12": (row["total_b12"] or 0) / d,
+        "vitamin_d": (row["total_d"] or 0) / d,
+        "folate": (row["total_folate"] or 0) / d,
+        "iron": (row["total_iron"] or 0) / d,
+        "zinc": (row["total_zinc"] or 0) / d,
+        "magnesium": (row["total_magnesium"] or 0) / d,
+        "calcium": (row["total_calcium"] or 0) / d,
+        "potassium": (row["total_potassium"] or 0) / d,
+        "omega_3": (row["total_omega_3"] or 0) / d,
+        "vitamin_a": (row["total_vitamin_a"] or 0) / d,
+        "vitamin_c": (row["total_vitamin_c"] or 0) / d,
+    })
 
     alerts = []
     for nutrient, target_info in RDA_TARGETS.items():
@@ -200,4 +220,4 @@ def get_nutrition_alerts(days: int = 3) -> str:
     if not alerts:
         return "No nutrition alerts"
 
-    return "=== NUTRITION ALERTS ===\n" + "\n".join(alerts)
+    return f"=== NUTRITION ALERTS ({d}d) ===\n" + "\n".join(alerts)

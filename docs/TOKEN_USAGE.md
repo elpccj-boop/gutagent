@@ -61,10 +61,18 @@ Subsequent:      input_tokens=500, cache_read_input_tokens=4500, output_tokens=2
 
 ## What Each Field Represents in GutAgent
 
+**Claude (three-tier caching):**
 | Field | Content |
 |-------|---------|
-| `cache_creation_input_tokens` / `cache_read_input_tokens` | Static prompt (~6k tokens): system instructions, profile, tool definitions |
-| `input_tokens` | Dynamic context + user message: recent meals, vitals, alerts, last exchange, conversation history |
+| `cache_creation_input_tokens` / `cache_read_input_tokens` | Static prompt + patient data (~8k tokens): instructions, profile, tools, recent meals/vitals/symptoms/labs, nutrition summary/alerts |
+| `input_tokens` | Turn context + user message: timestamp, recent_logs, last exchange |
+| `output_tokens` | LLM response: text, tool calls |
+
+**Gemini/OpenAI (single cache breakpoint):**
+| Field | Content |
+|-------|---------|
+| `cache_creation_input_tokens` / `cache_read_input_tokens` | Static prompt only (~6k tokens): instructions, profile, tools |
+| `input_tokens` | Patient data + turn context + user message (all dynamic) |
 | `output_tokens` | LLM response: text, tool calls |
 
 ## Example Verbose Output

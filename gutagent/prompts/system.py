@@ -13,6 +13,7 @@ from gutagent.db import (
     get_recent_exercise,
     get_recent_journal,
     list_recipes,
+    get_nutrition_summary,
     get_nutrition_alerts,
 )
 from gutagent.logging_config import get_logger
@@ -20,8 +21,12 @@ from gutagent.logging_config import get_logger
 logger = get_logger("prompts")
 
 
-def get_dynamic_context() -> str:
-    """Pull recent data from all tables for the system prompt."""
+def get_patient_data() -> str:
+    """Pull recent data from all tables — changes when user logs something.
+
+    This is the 'semi-static' context that can be cached separately from
+    the truly dynamic turn context (recent_logs, last_exchange).
+    """
     sections = []
 
     # Medications - current + recent 30 days
@@ -43,7 +48,7 @@ def get_dynamic_context() -> str:
         labs = get_latest_labs_per_test()
         if labs:
             lines = [
-                f"- {lab['test_name']}: "
+                f"- {lab['test_name']} ({lab['test_date']}): "
                 f"{f'{lab.get('value')} {lab.get('unit', '')}' if lab.get('value') else '—'}"
                 f"{f' (ref: {lab.get('reference_range')})' if lab.get('reference_range') else ''}"
                 f"{f' [{lab['status']}]' if lab.get('status') else ''}"
@@ -70,13 +75,12 @@ def get_dynamic_context() -> str:
     except Exception as e:
         logger.debug("Error building Vitals section: %s", e)
 
-    # Meals - last 3d
+    # Meals - last 3d (descriptions only, nutrition in summary)
     try:
         meals = get_recent_meals(days_back=3)
         if meals:
             lines = [
-                f"- [id:{m['id']}] {m['occurred_at']}: {m.get('meal_type') or 'meal'} — {m['description']}"
-                f"{f' [{int(m['calories'])}cal {int(m.get('protein', 0))}p {int(m.get('carbs', 0))}c {int(m.get('fat', 0))}f {int(m.get('fiber', 0))}fib]' if m.get('calories') else ''}"
+                f"- [id:{m['id']}] {m['occurred_at'][:10]} {m.get('meal_type') or 'meal'}: {m['description']}"
                 for m in meals
             ]
             sections.append("## Meals (3d)\n" + "\n".join(lines))
@@ -92,7 +96,7 @@ def get_dynamic_context() -> str:
                 f"{f' — {s.get('notes', '')[:70]}' if s.get('notes') else ''}"
                 for s in symptoms
             ]
-            sections.append("## Symptoms (7d)\n" + "\n".join(lines))
+            sections.append("## Symptoms (3d)\n" + "\n".join(lines))
     except Exception as e:
         logger.debug("Error building Symptoms section: %s", e)
 
@@ -140,20 +144,23 @@ def get_dynamic_context() -> str:
     except Exception as e:
         logger.debug("Error building Recipes section: %s", e)
 
-    return "\n\n".join(sections) if sections else "No data logged yet."
+    # Nutrition summary (3d averages)
+    try:
+        summary = get_nutrition_summary(days=3)
+        if summary and summary not in ("No nutrition data to analyze", "No nutrition summary"):
+            sections.append(summary)
+    except Exception as e:
+        logger.debug("Error building Nutrition summary section: %s", e)
 
-
-def get_nutrition_alerts_text() -> str:
-    """Get formatted nutrition alerts for the system prompt."""
+    # Nutrition alerts (3d rolling)
     try:
         alerts = get_nutrition_alerts(days=3)
+        if alerts and alerts not in ("No nutrition data to analyze", "No nutrition alerts"):
+            sections.append(alerts)
     except Exception as e:
-        return ""
+        logger.debug("Error building Nutrition alerts section: %s", e)
 
-    if not alerts or alerts == "No nutrition data to analyze" or alerts == "No nutrition alerts":
-        return ""
-
-    return alerts
+    return "\n\n".join(sections) if sections else "No data logged yet."
 
 
 def build_static_system_prompt(profile: dict) -> str:
@@ -183,6 +190,7 @@ NUTRITION:
 - Multi-item meals → check each item for recipe match
 - User provides recipe with ingredients → save_recipe with macros and all micros
 - Show full breakdown when logging
+- Nutrition summary/alerts: in patient data (3d) — tools only for other ranges
 
 CORRECTIONS:
 - IDs shown as [id:47]. Use ID from "Recently logged" for "update that"
@@ -203,13 +211,14 @@ DIETARY GUIDANCE: Respect profile triggers/safe foods. Never suggest known trigg
 
 COMMUNICATION: Brief and direct. Don't be repetitive and don't regurgitate profile data.
 
-ANALYZING PATTERNS & TRENDS:
+LABS: Check dates, interpret holistically. Don't repeat old concerns.
+
+PATTERNS & TRENDS:
 - Establish baseline using query_logs historical data
 - Compare current vs baseline (e.g., "baseline 118/78 in 2024, now 130/85")
 - Analyze direction, variability, correlations
-- Symptom reported → check recent meals via query_logs
-- Note correlations (med changes, nutrition gaps, timing)
-- Flag potential triggers
+- Symptom → check recent meals for triggers
+- Note correlations (med changes, nutrition gaps)
 
 NEVER FABRICATE DATA: No invented meds, diagnoses, labs for this patient.
 
@@ -217,17 +226,25 @@ SAVE SUGGESTIONS: Offer to save clinical recs (tests, deficiency checks), not ro
 """
 
 
-def build_dynamic_context() -> str:
-    """Build the DYNAMIC portion of the system prompt (not cached)."""
+def build_patient_data_context() -> str:
+    """Build the patient data context — cacheable, changes when user logs something."""
+    patient_data = get_patient_data()
+    return f"""## Current Data from Patient's Records
+{patient_data}"""
+
+
+def build_turn_context(recent_logs_str: str = "") -> str:
+    """Build the turn context — changes every turn, never cached.
+
+    Args:
+        recent_logs_str: Formatted string of recently logged entries.
+    """
     today = datetime.now().strftime("%Y-%m-%d %H:%M")
-    dynamic_context = get_dynamic_context()
-    nutrition_alerts = get_nutrition_alerts_text()
 
-    return f"""## Current Date and Time
-{today}
+    parts = [f"## Current Date and Time\n{today}"]
 
-## Current Data from Patient's Records
-{dynamic_context}
+    if recent_logs_str:
+        parts.append(recent_logs_str)
 
-{nutrition_alerts}"""
+    return "\n\n".join(parts)
 

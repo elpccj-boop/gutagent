@@ -99,14 +99,31 @@ async def run_agent_streaming(
 
     Supports Claude, Gemini, and OpenAI providers with provider-specific caching:
 
-    Prompt Structure:
-    - static_prompt (~6k tokens): System instructions, tool descriptions, rules
-    - dynamic_context (~200-500 tokens): Recent meals, vitals, alerts, last exchange
+    Prompt Structure (3-tuple from build_system_prompt):
+    - static_prompt (~6k tokens): System instructions, profile, rules
+    - patient_data (~1.5k tokens): Meals, vitals, symptoms, labs, recipes, alerts
+    - turn_context (~200 tokens): Timestamp, recent_logs for corrections
 
-    Caching Strategies (see helper functions for details):
-    - Claude: Both in system prompt, static marked with cache_control (TTL from CLAUDE_CACHE_TTL env)
-    - Gemini: Static in system prompt (explicit cache, 1hr TTL), dynamic in user message
-    - OpenAI: Static in system prompt (auto prefix cache, ~5-10 min), dynamic in user message
+    Caching Strategies by Provider:
+
+    Claude (best — multiple cache breakpoints):
+        - static_prompt: CACHED (cache_control marker)
+        - patient_data: CACHED (second cache_control marker)
+        - turn_context: NOT cached
+        - If patient_data changes, only second cache invalidates
+        - TTL: 5 min default, or 1 hour via CLAUDE_CACHE_TTL=1h
+
+    Gemini (one named cache):
+        - static_prompt: CACHED (explicit caches.create() API)
+        - patient_data + turn_context: in user message, NOT cached
+        - Cache survives patient_data changes but patient_data always full price
+        - TTL: 1 hour minimum (Gemini requirement)
+
+    OpenAI (automatic prefix matching):
+        - static_prompt: CACHED (automatic if prefix matches previous request)
+        - patient_data + turn_context: in user message, NOT cached
+        - No explicit cache control — OpenAI decides based on prefix match
+        - TTL: ~5-10 min (OpenAI internal, not configurable)
 
     Session State:
     - recent_logs: Tracks logs created in current session for corrections
@@ -122,8 +139,8 @@ async def run_agent_streaming(
     recent_logs = session["recent_logs"]
     last_exchange = session["last_exchange"]
 
-    # Build system prompt using core function
-    static_prompt, dynamic_context = build_system_prompt(profile, recent_logs)
+    # Build system prompt using core function (returns 3-tuple for three-tier caching)
+    static_prompt, patient_data, turn_context = build_system_prompt(profile, recent_logs)
 
     # Build messages using core function
     messages = build_messages(user_message, last_exchange)
@@ -141,9 +158,9 @@ async def run_agent_streaming(
     try:
         for iteration in range(MAX_ITERATIONS):
             if LLM_PROVIDER == "claude":
-                # Claude-specific streaming with prompt caching
+                # Claude-specific streaming with three-tier caching
                 async for event in _stream_claude_iteration(
-                    llm, messages, static_prompt, dynamic_context, show_tools,
+                    llm, messages, static_prompt, patient_data, turn_context, show_tools,
                     recent_logs, logs_this_turn
                 ):
                     if event.get("_done"):
@@ -159,8 +176,8 @@ async def run_agent_streaming(
                         yield f"data: {json.dumps(event)}\n\n"
             else:
                 # Generic provider streaming (Gemini, OpenAI)
-                # For Gemini with caching: static_prompt is cached, dynamic_context is prepended to messages
-                # For OpenAI: both are combined in system prompt (no caching benefit)
+                # Combine patient_data + turn_context for these providers
+                dynamic_context = f"{patient_data}\n\n{turn_context}"
                 async for event in _stream_generic_iteration(
                     llm, messages, static_prompt, dynamic_context, show_tools,
                     recent_logs, logs_this_turn
@@ -201,23 +218,25 @@ async def run_agent_streaming(
 async def _stream_generic_iteration(llm, messages, static_prompt, dynamic_context, show_tools, recent_logs, logs_this_turn):
     """Handle one iteration of generic provider streaming with tool execution.
 
-    Gemini Caching Strategy:
-    - Gemini uses explicit caching via client.caches.create()
-    - The entire system_instruction is cached as a unit (no partial caching)
-    - To cache only static content, we must move dynamic context elsewhere
-    - Static prompt: passed as system_instruction (cached for 1 hour)
-    - Dynamic context: prepended to first user message (not cached)
-    - Cache is created/managed in GeminiProvider._get_or_create_cache()
+    Used for Gemini and OpenAI — both only support single-tier caching,
+    so patient_data + turn_context are combined into dynamic_context and
+    moved to the user message to keep the system prompt static.
 
-    OpenAI Caching Strategy:
-    - OpenAI uses automatic prefix caching (no explicit API)
-    - Caches prompts ≥1024 tokens based on exact prefix match
-    - Cache hits occur when the system message prefix is identical
-    - Static prompt: passed as system message (auto-cached ~5-10 min)
-    - Dynamic context: prepended to first user message (not in cached prefix)
+    Gemini Caching:
+    - Explicit API: client.caches.create() with system_instruction + tools
+    - One named cache per request, 1-hour minimum TTL
+    - Static prompt cached, dynamic context in user message (full price)
+    - Cache survives across conversations if static prompt unchanged
 
-    Both Gemini and OpenAI require this workaround because they don't support
-    partial caching within the system prompt like Claude does.
+    OpenAI Caching:
+    - Automatic prefix matching, no explicit API
+    - Caches if system message prefix ≥1024 tokens matches previous request
+    - TTL ~5-10 min (not configurable)
+    - Static prompt cached, dynamic context in user message (full price)
+
+    Neither supports multiple cache breakpoints like Claude, so patient_data
+    cannot be cached separately — it's either in system prompt (invalidates
+    on change) or in user message (never cached). We choose user message.
     """
     from gutagent.config import TOOLS, MAX_TOKENS
 
@@ -304,19 +323,23 @@ async def _stream_generic_iteration(llm, messages, static_prompt, dynamic_contex
         yield {"_done": True, "response_text": response_text}
 
 
-async def _stream_claude_iteration(llm, messages, static_prompt, dynamic_context, show_tools, recent_logs, logs_this_turn):
+async def _stream_claude_iteration(llm, messages, static_prompt, patient_data, turn_context, show_tools, recent_logs, logs_this_turn):
     """Handle one iteration of Claude streaming with tool execution.
 
     Uses ClaudeProvider.chat_stream() which handles caching internally.
-    Claude supports per-block cache control, so we pass (static, dynamic) tuple.
+    Claude supports per-block cache control with multiple breakpoints:
+    - static_prompt: cached (rarely changes)
+    - patient_data: cached (changes when user logs)
+    - turn_context: not cached (changes every turn)
+
     TTL is controlled by CLAUDE_CACHE_TTL env var in the provider.
     """
     from gutagent.config import TOOLS, MAX_TOKENS
 
     collected_text = ""
 
-    # Claude handles the tuple directly - static gets cached, dynamic doesn't
-    system_prompt = (static_prompt, dynamic_context)
+    # Claude handles the 3-tuple directly for three-tier caching
+    system_prompt = (static_prompt, patient_data, turn_context)
 
     # Use the provider's streaming interface (same as generic)
     gen = llm.chat_stream(messages, system_prompt, TOOLS, MAX_TOKENS)

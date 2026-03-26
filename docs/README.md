@@ -182,7 +182,6 @@ Tests use a temporary database and profile — your data is never touched.
 
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — Technical deep dive
 - [TODO.md](docs/TODO.md) — Roadmap and known issues
-- [REFACTORING.md](docs/REFACTORING.md) — Technical debt and improvements
 
 ## Known Limitations
 

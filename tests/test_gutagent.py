@@ -95,10 +95,10 @@ from gutagent.core import format_recent_logs
 
 # System prompts
 from gutagent.prompts.system import (
-    get_dynamic_context,
-    get_nutrition_alerts_text,
+    get_patient_data,
+    build_patient_data_context,
+    build_turn_context,
     build_static_system_prompt,
-    build_dynamic_context,
 )
 
 
@@ -1588,8 +1588,8 @@ class TestLLMProviders:
     """Tests for LLM provider functionality."""
 
     @pytest.mark.skipif(not HAS_ANTHROPIC, reason="anthropic not installed")
-    def test_claude_prepare_cached_request_tuple(self):
-        """Test Claude cache control with (static, dynamic) tuple."""
+    def test_claude_prepare_cached_request_three_tier(self):
+        """Test Claude cache control with (static, patient_data, turn_context) 3-tuple."""
         from gutagent.llm.claude_provider import ClaudeProvider
 
         # Create provider without API key (we won't make actual calls)
@@ -1597,17 +1597,22 @@ class TestLLMProviders:
         provider.cache_ttl = None  # Default 5-minute cache
 
         static = "You are a helpful assistant."
-        dynamic = "Recent context here."
+        patient_data = "Recent meals and vitals here."
+        turn_context = "Timestamp and recent_logs here."
         tools = [{"name": "test_tool", "description": "A test", "input_schema": {"type": "object"}}]
 
-        cached_system, cached_tools = provider._prepare_cached_request((static, dynamic), tools)
+        cached_system, cached_tools = provider._prepare_cached_request(
+            (static, patient_data, turn_context), tools
+        )
 
-        # Should have 2 blocks: static (cached) and dynamic (not cached)
-        assert len(cached_system) == 2
+        # Should have 3 blocks: static (cached), patient_data (cached), turn_context (not cached)
+        assert len(cached_system) == 3
         assert cached_system[0]["text"] == static
         assert cached_system[0]["cache_control"] == {"type": "ephemeral"}
-        assert cached_system[1]["text"] == dynamic
-        assert "cache_control" not in cached_system[1]
+        assert cached_system[1]["text"] == patient_data
+        assert cached_system[1]["cache_control"] == {"type": "ephemeral"}
+        assert cached_system[2]["text"] == turn_context
+        assert "cache_control" not in cached_system[2]
 
         # Last tool should be marked for caching
         assert cached_tools[-1]["cache_control"] == {"type": "ephemeral"}
@@ -1621,31 +1626,17 @@ class TestLLMProviders:
         provider.cache_ttl = "1h"
 
         static = "You are a helpful assistant."
-        dynamic = "Recent context here."
+        patient_data = "Recent meals."
+        turn_context = "Timestamp."
         tools = []
 
-        cached_system, cached_tools = provider._prepare_cached_request((static, dynamic), tools)
+        cached_system, cached_tools = provider._prepare_cached_request(
+            (static, patient_data, turn_context), tools
+        )
 
-        # Should include TTL in cache_control
+        # Should include TTL in cache_control for both cached blocks
         assert cached_system[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
-
-    @pytest.mark.skipif(not HAS_ANTHROPIC, reason="anthropic not installed")
-    def test_claude_prepare_cached_request_legacy_string(self):
-        """Test Claude cache control with legacy single-string prompt."""
-        from gutagent.llm.claude_provider import ClaudeProvider
-
-        provider = ClaudeProvider.__new__(ClaudeProvider)
-        provider.cache_ttl = None
-
-        prompt = "You are a helpful assistant with all context here."
-        tools = []
-
-        cached_system, cached_tools = provider._prepare_cached_request(prompt, tools)
-
-        # Should have 1 block, all cached
-        assert len(cached_system) == 1
-        assert cached_system[0]["text"] == prompt
-        assert cached_system[0]["cache_control"] == {"type": "ephemeral"}
+        assert cached_system[1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
     def test_llm_response_usage(self):
         """Test LLMResponse properly stores usage data."""
@@ -1755,18 +1746,16 @@ class TestSystemPrompts:
         assert '"gluten"' in prompt
         assert '"dairy"' in prompt
 
-    def test_get_dynamic_context_empty_db(self):
-        """Test dynamic context with no data returns something."""
-        context = get_dynamic_context()
+    def test_get_patient_data_empty_db(self):
+        """Test patient data with no data returns placeholder."""
+        data = get_patient_data()
 
-        # May return "No data logged yet." or vitals placeholder
-        # Just verify it's a non-empty string
-        assert isinstance(context, str)
-        assert len(context) > 0
+        # Should return "No data logged yet." or similar
+        assert isinstance(data, str)
+        assert len(data) > 0
 
-    def test_get_dynamic_context_with_meal(self):
-        """Test dynamic context includes logged meal."""
-        # Log a meal (meal_type, description, items, nutrition)
+    def test_get_patient_data_with_meal(self):
+        """Test patient data includes logged meal."""
         log_meal_with_nutrition(
             "breakfast",
             "test breakfast",
@@ -1774,53 +1763,53 @@ class TestSystemPrompts:
             nutrition={"calories": 180, "protein": 12, "carbs": 1, "fat": 12, "fiber": 0},
         )
 
-        context = get_dynamic_context()
+        data = get_patient_data()
 
-        assert "## Meals" in context
-        assert "test breakfast" in context
-        assert "180cal" in context
+        assert "## Meals" in data
+        assert "test breakfast" in data
+        assert "NUTRITION SUMMARY (1d)" in data
+        assert "Daily avg: 180 cal" in data
 
-    def test_get_dynamic_context_with_symptom(self):
-        """Test dynamic context includes logged symptom."""
+    def test_get_patient_data_with_symptom(self):
+        """Test patient data includes logged symptom."""
         log_symptom("bloating", severity=6, notes="after lunch")
 
-        context = get_dynamic_context()
+        data = get_patient_data()
 
-        assert "## Symptoms" in context
-        assert "bloating" in context
-        assert "(6)" in context
+        assert "## Symptoms" in data
+        assert "bloating" in data
+        assert "(6)" in data
 
-    def test_get_dynamic_context_with_vitals(self):
-        """Test dynamic context includes logged vitals."""
+    def test_get_patient_data_with_vitals(self):
+        """Test patient data includes logged vitals."""
         log_vital("blood_pressure", systolic=120, diastolic=80, heart_rate=72)
 
-        context = get_dynamic_context()
+        data = get_patient_data()
 
-        # Vitals section uses different format
-        assert "120" in context
-        assert "80" in context
+        assert "120" in data
+        assert "80" in data
 
-    def test_get_dynamic_context_with_sleep(self):
-        """Test dynamic context includes logged sleep."""
+    def test_get_patient_data_with_sleep(self):
+        """Test patient data includes logged sleep."""
         log_sleep(hours=7.5, quality="good")
 
-        context = get_dynamic_context()
+        data = get_patient_data()
 
-        assert "## Sleep" in context
-        assert "7.5h" in context
+        assert "## Sleep" in data
+        assert "7.5h" in data
 
-    def test_get_dynamic_context_with_exercise(self):
-        """Test dynamic context includes logged exercise."""
+    def test_get_patient_data_with_exercise(self):
+        """Test patient data includes logged exercise."""
         log_exercise("walking", duration_minutes=30)
 
-        context = get_dynamic_context()
+        data = get_patient_data()
 
-        assert "## Exercise" in context
-        assert "walking" in context
-        assert "30min" in context
+        assert "## Exercise" in data
+        assert "walking" in data
+        assert "30min" in data
 
-    def test_get_dynamic_context_with_recipe(self):
-        """Test dynamic context includes saved recipes."""
+    def test_get_patient_data_with_recipe(self):
+        """Test patient data includes saved recipe names."""
         save_recipe(
             name="Test Oatmeal",
             ingredients=[{"name": "oats", "amount": 1, "unit": "cup"}],
@@ -1828,67 +1817,47 @@ class TestSystemPrompts:
             nutrition={"calories": 150, "protein": 5, "carbs": 27, "fat": 3, "fiber": 4},
         )
 
-        context = get_dynamic_context()
+        data = get_patient_data()
 
-        assert "## Saved Recipes" in context
-        assert "Test Oatmeal" in context
-        # Per-serving nutrition: 150/2 = 75cal - not in context
-        assert "75cal" not in context
+        assert "## Saved Recipes" in data
+        assert "Test Oatmeal" in data
 
-    def test_get_nutrition_alerts_text_no_data(self):
-        """Test nutrition alerts with no nutrition data."""
-        alerts = get_nutrition_alerts_text()
+    def test_build_patient_data_context_structure(self):
+        """Test patient data context has required header."""
+        context = build_patient_data_context()
 
-        # Should return empty string when no data
-        assert alerts == ""
-
-    def test_get_nutrition_alerts_text_returns_string(self):
-        """Test nutrition alerts returns a string."""
-        # Log a meal with nutrition
-        log_meal_with_nutrition(
-            "lunch",
-            "plain rice",
-            items=[{"food_name": "rice", "quantity": 1, "unit": "cup"}],
-            nutrition={
-                "calories": 200, "protein": 4, "carbs": 45, "fat": 0, "fiber": 1,
-                "iron": 0.5,
-            },
-        )
-
-        alerts = get_nutrition_alerts_text()
-
-        # Just verify it returns a string (empty or with content)
-        assert isinstance(alerts, str)
-
-    def test_build_dynamic_context_structure(self):
-        """Test full dynamic context has required sections."""
-        context = build_dynamic_context()
-
-        # Should have date/time section
-        assert "## Current Date and Time" in context
-        # Should have data section
         assert "## Current Data from Patient's Records" in context
 
-    def test_build_dynamic_context_includes_timestamp(self):
-        """Test dynamic context includes current date."""
+    def test_build_turn_context_structure(self):
+        """Test turn context has timestamp."""
         from datetime import datetime
 
-        context = build_dynamic_context()
+        context = build_turn_context()
         today = datetime.now().strftime("%Y-%m-%d")
 
+        assert "## Current Date and Time" in context
         assert today in context
 
-    def test_dynamic_context_truncates_long_notes(self):
+    def test_build_turn_context_with_recent_logs(self):
+        """Test turn context includes recent logs string."""
+        recent_logs_str = "Recently logged:\n  [meals] id:1 — eggs"
+
+        context = build_turn_context(recent_logs_str)
+
+        assert "Recently logged" in context
+        assert "eggs" in context
+
+    def test_patient_data_truncates_long_notes(self):
         """Test that long notes are truncated to 70 chars."""
         long_note = "A" * 100  # 100 character note
         log_symptom("headache", severity=5, notes=long_note)
 
-        context = get_dynamic_context()
+        data = get_patient_data()
 
         # Should not contain full 100-char note
-        assert "A" * 100 not in context
+        assert "A" * 100 not in data
         # Should contain truncated version (70 chars)
-        assert "A" * 70 in context
+        assert "A" * 70 in data
 
 
 # =============================================================================

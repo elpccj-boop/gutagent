@@ -1,7 +1,11 @@
 """Shared core logic for GutAgent — used by both CLI and web interfaces."""
 
 import json
-from gutagent.prompts.system import build_static_system_prompt, build_dynamic_context
+from gutagent.prompts.system import (
+    build_static_system_prompt,
+    build_patient_data_context,
+    build_turn_context,
+)
 from gutagent.tools.registry import execute_tool
 
 
@@ -93,25 +97,28 @@ def build_messages(user_message: str, last_exchange: dict) -> list:
     return messages
 
 
-def build_system_prompt(profile: dict, recent_logs: dict) -> tuple[str, str]:
-    """Build system prompt as (static, dynamic) tuple.
+def build_system_prompt(profile: dict, recent_logs: dict) -> tuple[str, str, str]:
+    """Build system prompt as (static, patient_data, turn_context) tuple.
     
     Args:
         profile: User's medical profile dict.
         recent_logs: Recently logged entries for edit context.
     
     Returns:
-        Tuple of (static_prompt, dynamic_context) strings.
-        Static part can be cached, dynamic part changes each call.
+        Tuple of (static_prompt, patient_data, turn_context) strings.
+
+        Three-tier caching strategy:
+        - static_prompt: Instructions + profile + tools. Rarely changes. CACHED.
+        - patient_data: Meals, vitals, symptoms, etc. Changes when user logs. CACHED.
+        - turn_context: Timestamp + recent_logs. Changes every turn. NOT CACHED.
     """
     static = build_static_system_prompt(profile)
-    dynamic = build_dynamic_context()
+    patient_data = build_patient_data_context()
     
     logs_context = format_recent_logs(recent_logs)
-    if logs_context:
-        dynamic = dynamic + "\n\n" + logs_context
+    turn_context = build_turn_context(logs_context)
     
-    return (static, dynamic)
+    return (static, patient_data, turn_context)
 
 
 def track_log_operation(

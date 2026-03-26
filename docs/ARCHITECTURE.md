@@ -134,9 +134,16 @@ All providers implement prompt caching to reduce costs and latency:
 | Gemini | Explicit (caches.create API) | 1 hour minimum | 90% (2.5+), 75% (2.0) |
 | OpenAI | Automatic (prefix matching) | 5-10 min | 50% |
 
-**What gets cached:**
-- Static prompt (~5-6k tokens): System instructions, profile, tool definitions
-- **Not cached**: Dynamic context (recent meals, vitals, alerts, conversation)
+**Claude three-tier caching:**
+```
+Static (CACHED):       Instructions + profile + tools   ~6k tokens
+Patient data (CACHED): Meals, vitals, symptoms, etc.    ~1.5-2k tokens  
+Turn context (NOT):    Timestamp + recent_logs          ~200-500 tokens
+```
+
+Two cache breakpoints allow patient_data to invalidate independently when user logs something, while static content stays cached.
+
+**Gemini/OpenAI:** Only static prompt is cached. Patient data goes in user message (not cached) since these providers support only one cache breakpoint.
 
 **Token usage is normalized** across all providers to match Claude's semantics:
 - `input_tokens`: Uncached input only (dynamic context + user message)
@@ -167,10 +174,11 @@ Total input = `input_tokens` + (`cache_creation_input_tokens` OR `cache_read_inp
 
 ### System Prompt Structure
 
-The system prompt has two parts:
+The system prompt has three parts:
 
-1. **Static** (cached) — Instructions + profile JSON
-2. **Dynamic** (rebuilt each call) — Recent data from all tables + nutrition alerts + recently logged entries
+1. **Static** (cached) — Instructions + profile JSON + tools
+2. **Patient data** (cached for Claude, user msg for others) — Recent data from all tables + nutrition summary/alerts
+3. **Turn context** (never cached) — Current timestamp + recently logged entries
 
 This gives the LLM context without needing explicit queries for common questions like "what did I eat today?"
 
@@ -184,11 +192,12 @@ All data includes IDs for corrections (e.g., `[id:47]`).
 | Labs | Latest per test | Most recent value for each test type |
 | Vitals | 3 | |
 | Symptoms | 3 | |
-| Meals | 3 | With nutrition breakdown |
+| Meals | 3 | Descriptions only (nutrition in summary) |
 | Sleep | 3 | |
 | Exercise | 3 | |
 | Journal | 3 | Max 5 entries |
 | Recipes | All | Names only (backend fetches nutrition) |
+| Nutrition | 3 | Summary (daily averages) + Alerts |
 
 #### query_logs Tool
 
