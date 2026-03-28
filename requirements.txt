@@ -1,18 +1,22 @@
 # Core
 python-dotenv>=1.0.0
-
-# CLI
 rich>=13.0.0
-prompt_toolkit>=3.0.0
+prompt-toolkit>=3.0.0
 
-# Web UI
-fastapi>=0.115.0
-uvicorn>=0.32.0
+# Web/Mobile API
+fastapi>=0.110.0
+uvicorn>=0.27.0
+pydantic[email]>=2.0.0
 
-# LLM Providers (install the one you need)
-anthropic>=0.40.0      # Claude
-google-genai>=1.0.0    # Gemini
-# openai>=1.0.0        # OpenAI
+# Auth (Mobile API)
+pyjwt>=2.8.0
+bcrypt>=4.1.0
+cryptography>=42.0.0
+
+# LLM Providers
+anthropic>=0.40.0
+google-genai>=1.0.0
+openai>=1.0.0
 
 # Testing
 pytest>=8.0.0
