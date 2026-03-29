@@ -11,3 +11,4 @@ __pycache__/
 .idea/
 .claude/
 *.egg-info/
+export.json
