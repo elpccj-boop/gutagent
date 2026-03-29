@@ -400,6 +400,55 @@ pytest tests/test_gutagent.py -v -x
 
 Tests use a temporary database and profile — your real data is never touched.
 
+## Mobile API (`api/mobile.py`)
+
+A stateless LLM proxy for the Flutter mobile app. Health data stays on the phone; the server only forwards requests to LLM providers.
+
+### Running
+
+```bash
+python -m gutagent.api.mobile
+# → http://localhost:8001
+```
+
+### Endpoints
+
+```
+POST /auth/register           # Create account
+POST /auth/login              # Get JWT token
+
+GET  /settings                # Get provider, model tier, api_keys (bool)
+POST /settings                # Update provider, model tier
+POST /settings/apikey         # Set encrypted API key for provider
+DELETE /settings/apikey/:provider
+
+POST /chat                    # Blocking LLM proxy
+POST /chat/stream             # Streaming LLM proxy (SSE)
+```
+
+### Features
+
+- **Multi-provider**: Claude, Gemini, OpenAI with unified response format
+- **Prompt caching**: Three-tier for Claude, explicit for Gemini, automatic for OpenAI
+- **Multi-tool support**: Returns ALL tool_use blocks in a single response
+- **Streaming**: SSE events for text chunks, tool calls, and usage
+- **BYOK**: User API keys stored encrypted (Fernet)
+
+### Server Logging
+
+Each request logs:
+```
+============================================================
+CHAT REQUEST from user@example.com
+  Question: How's my nutrition?
+  Iteration: 1 | Messages: 1 | Tools: 18
+  System: 2624 | Patient: 710 | Turn: 32 chars
+============================================================
+   → gemini-2.5-flash
+      → Text: Your nutrition over the last 3 days...
+   TOTAL: in=494 out=141 | cache: 3675 read
+```
+
 ## Known Limitations
 
 1. **No offline queue** — Web UI requires connectivity
@@ -408,15 +457,8 @@ Tests use a temporary database and profile — your real data is never touched.
 
 ## Future Considerations
 
-When evolving to a proper mobile app:
-- Current architecture separates concerns well for porting
-- `agent.py` logic is interface-agnostic
-- Database schema is stable, can migrate to any SQL backend
-- Tool definitions in `config.py` can serialize to any format
-- Profile structure is JSON, portable anywhere
-
-The main work would be:
-1. Native mobile UI (React Native, Flutter, or native)
-2. Backend API deployment (current FastAPI works as-is)
-3. User authentication system
-4. Cloud database (Postgres, Supabase, etc.)
+The mobile app (Flutter) is now available:
+- Health data stored locally on device (SQLite)
+- Server is stateless LLM proxy (BYOK model)
+- Tool execution happens on-device
+- See `gutagent_mobile` repo for the app

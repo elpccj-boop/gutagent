@@ -34,6 +34,7 @@ mobile = [
 ]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.23.0",
     "ruff>=0.3",
 ]
 
@@ -43,3 +44,7 @@ gutagent-mobile-api = "gutagent.api.mobile:main"
 
 [tool.setuptools]
 packages = ["gutagent"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
